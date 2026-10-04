@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>LinCut</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; img-src 'self' file: data: blob:; media-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+
+<!-- ============================ ГЛАВНЫЙ ЭКРАН ============================ -->
+<section id="home" class="screen">
+  <header class="titlebar drag">
+    <span class="logo"></span><span class="tb-app">LinCut</span>
+    <span class="tb-grow"></span>
+    <span class="win-space"></span>
+  </header>
+  <div class="home-body">
+    <aside class="home-side">
+      <nav>
+        <a class="active"><span data-i="home"></span>Главная</a>
+      </nav>
+      <div class="home-side-foot">
+        <div class="side-label">Тема</div>
+        <div class="theme-list" id="themeList"></div>
+        <div class="side-label">Папка проектов</div>
+        <button class="path-link" id="projectsPath" title="Открыть папку"></button>
+      </div>
+    </aside>
+    <main class="home-main">
+      <div class="home-scroll">
+        <div class="home-hero">
+          <button class="create-tile" id="btnCreate">
+            <span class="ct-plus" data-i="plus"></span>
+            <span class="ct-text"><b>Создать проект</b><small>Импортируйте видео, фото и музыку — соотношение сторон подстроится само</small></span>
+          </button>
+        </div>
+        <div class="home-head">
+          <h2>Проекты <span class="count" id="projCount"></span></h2>
+          <div class="home-tools">
+            <label class="search"><span data-i="search"></span><input id="projSearch" placeholder="Поиск" spellcheck="false"></label>
+            <div class="seg" id="projView">
+              <button data-v="grid" title="Плиткой"><span data-i="grid"></span></button>
+              <button data-v="list" title="Списком"><span data-i="list"></span></button>
+            </div>
+          </div>
+        </div>
+        <div class="projects" id="projects"></div>
+        <div class="empty-projects" id="emptyProjects">
+          <span data-i="film"></span>
+          <div>Проектов пока нет</div>
+          <small>Нажмите «Создать проект», чтобы начать</small>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============================ РЕДАКТОР ============================ -->
+<section id="editor" class="screen hidden">
+  <header class="topbar drag">
+    <div class="tb-left">
+      <button class="app-mark" id="btnHome" title="На главную"><span class="logo"></span></button>
+      <nav class="menubar" id="menubar">
+        <button data-m="file">Файл</button>
+        <button data-m="edit">Правка</button>
+        <button data-m="clip">Клип</button>
+        <button data-m="view">Вид</button>
+        <button data-m="help">Справка</button>
+      </nav>
+    </div>
+    <div class="tb-center">
+      <input id="projectName" class="project-name" spellcheck="false" maxlength="80">
+      <span class="autosave" id="autosave"></span>
+    </div>
+    <div class="tb-right">
+      <button class="icon-btn" id="btnShortcuts" title="Горячие клавиши"><span data-i="keyboard"></span></button>
+      <button class="export-btn" id="btnExport"><span data-i="upload"></span>Экспорт</button>
+      <span class="win-space"></span>
+    </div>
+  </header>
+
+  <div class="workspace" id="workspace">
+    <!-- Левая панель -->
+    <div class="panel panel-left">
+      <div class="lp-tabs" id="lpTabs">
+        <button data-tab="media" class="active"><span data-i="media"></span>Медиа</button>
+        <button data-tab="audio"><span data-i="music"></span>Аудио</button>
+        <button data-tab="text"><span data-i="type"></span>Текст</button>
+        <button data-tab="stickers"><span data-i="sticker"></span>Стикеры</button>
+        <button data-tab="effects"><span data-i="sparkles"></span>Эффекты</button>
+        <button data-tab="filters"><span data-i="filters"></span>Фильтры</button>
+        <button data-tab="transitions"><span data-i="transition"></span>Переходы</button>
+      </div>
+      <div class="lp-body">
+        <div class="lp-nav" id="lpNav"></div>
+        <div class="lp-content" id="lpContent"></div>
+      </div>
+    </div>
+
+    <div class="splitter-v" data-split="left"></div>
+
+    <!-- Проигрыватель -->
+    <div class="panel panel-player">
+      <div class="panel-title">
+        <span>Проигрыватель</span>
+        <span class="muted small" id="playerInfo"></span>
+      </div>
+      <div class="stage-row">
+        <div class="stage" id="stage">
+          <div class="stage-inner" id="stageInner">
+            <canvas id="preview"></canvas>
+          </div>
+          <canvas id="overlay"></canvas>
+          <div class="drop-hint hidden" id="dropHint"><span data-i="upload"></span>Перетащите файлы сюда</div>
+        </div>
+        <div class="scopes hidden" id="scopes">
+          <div class="sc-head"><div class="seg" id="scMode"></div></div>
+          <div class="sc-body"><canvas id="scCanvas"></canvas></div>
+        </div>
+      </div>
+      <div class="player-bar">
+        <div class="pb-left">
+          <span class="tc cur" id="tcCur">00:00:00</span><span class="tc sep">/</span><span class="tc total" id="tcTotal">00:00:00</span>
+          <span class="shuttle hidden" id="shuttle"></span>
+        </div>
+        <div class="pb-center">
+          <button class="icon-btn" id="btnPrevFrame" title="Кадр назад (←)"><span data-i="skipBack"></span></button>
+          <button class="play-btn" id="btnPlay" title="Воспроизвести (Пробел)"><span data-i="play"></span></button>
+          <button class="icon-btn" id="btnNextFrame" title="Кадр вперёд (→)"><span data-i="skipFwd"></span></button>
+        </div>
+        <div class="pb-right">
+          <div class="menu-anchor">
+            <button class="ghost-btn" id="btnRatio" title="Соотношение сторон"><span data-i="ratio"></span><span id="ratioLabel">16:9</span></button>
+          </div>
+          <button class="icon-btn toggle" id="btnScopes" title="Видеоскопы Lumetri"><span data-i="scopes"></span></button>
+          <button class="icon-btn" id="btnFullscreen" title="Полный экран"><span data-i="maximize"></span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="splitter-v" data-split="right"></div>
+
+    <!-- Инспектор -->
+    <div class="panel panel-right" id="inspector"></div>
+  </div>
+
+  <div class="splitter-h" id="splitterH"></div>
+
+  <!-- Таймлайн -->
+  <div class="timeline" id="timeline">
+    <div class="tl-toolbar">
+      <div class="tl-tools">
+        <div class="tool-box" id="tlToolsBox"></div>
+        <i class="tl-sep"></i>
+        <button class="icon-btn" id="tUndo" title="Отменить (Ctrl+Z)"><span data-i="undo"></span></button>
+        <button class="icon-btn" id="tRedo" title="Повторить (Ctrl+Shift+Z)"><span data-i="redo"></span></button>
+        <i class="tl-sep"></i>
+        <button class="icon-btn" id="tSplit" title="Разделить (Ctrl+B)"><span data-i="split"></span></button>
+        <button class="icon-btn" id="tTrimL" title="Удалить слева от курсора (Q)"><span data-i="trimLeft"></span></button>
+        <button class="icon-btn" id="tTrimR" title="Удалить справа от курсора (W)"><span data-i="trimRight"></span></button>
+        <button class="icon-btn" id="tDelete" title="Удалить (Delete)"><span data-i="trash"></span></button>
+        <i class="tl-sep"></i>
+        <button class="icon-btn" id="tDup" title="Дублировать (Ctrl+D)"><span data-i="copy"></span></button>
+        <button class="icon-btn" id="tDetach" title="Отделить аудио"><span data-i="unlink"></span></button>
+        <button class="icon-btn" id="tFreeze" title="Стоп-кадр"><span data-i="snow"></span></button>
+        <button class="icon-btn" id="tMirror" title="Отразить"><span data-i="flip"></span></button>
+        <button class="icon-btn" id="tRotate" title="Повернуть на 90°"><span data-i="rotate"></span></button>
+        <i class="tl-sep"></i>
+        <button class="icon-btn" id="tMarker" title="Маркер (B)"><span data-i="marker"></span></button>
+        <i class="tl-sep"></i>
+        <button class="icon-btn" id="tMarkIn" title="Точка входа (I)"><span data-i="markIn"></span></button>
+        <button class="icon-btn" id="tMarkOut" title="Точка выхода (O)"><span data-i="markOut"></span></button>
+        <button class="icon-btn" id="tLift" title="Убрать между входом и выходом, оставить пробел (;)"><span data-i="lift"></span></button>
+        <button class="icon-btn" id="tExtract" title="Вырезать между входом и выходом со сдвигом (')"><span data-i="extract"></span></button>
+      </div>
+      <div class="tl-tools right">
+        <button class="rec-btn" id="tRecord" title="Записать озвучку (R)"><span data-i="mic"></span><span>Озвучка</span></button>
+        <i class="tl-sep"></i>
+        <button class="icon-btn toggle on" id="tMagnet" title="Главная дорожка: авто-склейка"><span data-i="magnet"></span></button>
+        <button class="icon-btn toggle on" id="tSnap" title="Привязка"><span data-i="snap"></span></button>
+        <i class="tl-sep"></i>
+        <button class="icon-btn" id="tZoomOut" title="Уменьшить (−)"><span data-i="zoomOut"></span></button>
+        <input type="range" id="tZoom" min="0" max="100" value="40" class="zoom-range">
+        <button class="icon-btn" id="tZoomIn" title="Увеличить (+)"><span data-i="zoomIn"></span></button>
+        <button class="icon-btn" id="tZoomFit" title="Вписать (Shift+Z)"><span data-i="fit"></span></button>
+      </div>
+    </div>
+    <div class="tl-body" id="tlBody">
+      <div class="tl-scroll" id="tlScroll">
+        <div class="tl-canvas" id="tlCanvas">
+          <div class="tl-ruler" id="tlRuler"><div class="tl-corner"></div><canvas id="rulerCanvas"></canvas><div class="tl-marks" id="tlMarks"></div></div>
+          <div class="tl-tracks" id="tlTracks"></div>
+          <div class="tl-snapline hidden" id="snapLine"></div>
+          <div class="tl-insert hidden" id="insertLine"></div>
+          <div class="tl-range hidden" id="tlRange"></div>
+          <div class="tl-cutline hidden" id="cutLine"></div>
+          <div class="tl-playhead" id="playhead"><i></i></div>
+        </div>
+      </div>
+      <div class="tl-empty" id="tlEmpty"><span data-i="media"></span>Перетащите медиа сюда, чтобы начать монтаж</div>
+      <div class="au-meter hidden" id="auMeter" title="Индикатор громкости"><canvas></canvas></div>
+    </div>
+  </div>
+</section>
+
+<!-- Модальные окна / меню / тосты -->
+<div id="modalRoot"></div>
+<div id="menuRoot"></div>
+<div id="toastRoot"></div>
+
+<!-- Кнопки окна (своя рамка вместо системной). Стоят ПОСЛЕ экранов: области перетаскивания окна
+     считаются по порядку, и шапка, идущая позже, перекрывала бы кнопки — клики уходили в перетаскивание -->
+<div class="win-ctl" id="winCtl">
+  <button data-w="min" title="Свернуть"><svg viewBox="0 0 12 12"><path d="M2 6.5h8"/></svg></button>
+  <button data-w="max" title="Развернуть"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1"/></svg></button>
+  <button data-w="close" title="Закрыть"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
+</div>
+
+<script src="js/icons.js"></script>
+<script src="js/util.js"></script>
+<script src="js/store.js"></script>
+<script src="js/media.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ae.js"></script>
+<script src="js/effects.js"></script>
+<script src="js/player.js"></script>
+<script src="js/timeline.js"></script>
+<script src="js/edit.js"></script>
+<script src="js/scopes.js"></script>
+<script src="js/inspector.js"></script>
+<script src="js/panels.js"></script>
+<script src="js/voiceover.js"></script>
+<script src="js/exporter.js"></script>
+<script src="js/voicesep.js"></script>
+<script src="js/voicefx.js"></script>
+<script src="js/stab.js"></script>
+<script src="js/track.js"></script>
+<script src="js/roto.js"></script>
+<script src="js/links.js"></script>
+<script src="js/home.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

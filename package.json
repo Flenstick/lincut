@@ -1,0 +1,77 @@
+{
+  "name": "lincut",
+  "productName": "LinCut",
+  "version": "1.0.0",
+  "description": "Видеоредактор для Linux и Windows в стиле CapCut",
+  "main": "main.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win --x64",
+    "fetch:win": "build/fetch-win-bins.sh"
+  },
+  "desktopName": "lincut.desktop",
+  "author": "LinCut",
+  "build": {
+    "appId": "app.lincut.editor",
+    "productName": "LinCut",
+    "electronVersion": "43.6.0",
+    "asar": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "src/**/*",
+      "assets/**/*",
+      "tools/*.py"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/win",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "executableName": "LinCut",
+      "artifactName": "LinCut-${version}-win-x64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "LinCut",
+      "artifactName": "LinCut-Setup-${version}.exe",
+      "installerLanguages": [
+        "ru_RU"
+      ],
+      "language": "1049",
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "devDependencies": {
+    "electron-builder": "^26.15.3"
+  }
+}

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- LinCut: буква L, основание разрезано наискось — отрезанный кусок светлый, как следующий клип -->
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#0e0e10"/>
+  <rect x="33" y="29" width="19" height="70" rx="4" fill="#1fcfe0"/>
+  <path d="M37 80 H64 L57.5 99 H37 a4 4 0 0 1 -4 -4 V84 a4 4 0 0 1 4 -4 Z" fill="#1fcfe0"/>
+  <path d="M72 80 H92 a4 4 0 0 1 4 4 V95 a4 4 0 0 1 -4 4 H65.5 Z" fill="#f4f4f5"/>
+</svg>
