@@ -2,3 +2,4 @@ node_modules/
 dist/
 vendor/
 HANDOFF.md
+__pycache__/

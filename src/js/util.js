@@ -5,6 +5,8 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const uid = () => Math.random().toString(36).slice(2, 10);
 const deep = (o) => JSON.parse(JSON.stringify(o));
+// прогресс задачи нейросети: на сервере она может ждать в очереди
+const jobPct = (j) => j && j.pos ? `в очереди: ${j.pos}` : Math.round(((j && j.p) || 0) * 100) + '%';
 // 1 месте, 2 местах, 5 местах
 const plural = (n, one, few, many) => { const a = Math.abs(n) % 100, b = a % 10; return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many; };
 const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

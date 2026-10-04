@@ -305,6 +305,14 @@ input, textarea, select { font: inherit; color: inherit; }
 .media-card:hover .mc-add { opacity: 1; }
 .media-card:hover .mc-dur { opacity: 0; }
 .mc-name { font-size: 11px; color: var(--text-2); margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* нейросети: где считать */
+.ai-srv { display: flex; flex-direction: column; gap: 10px; }
+.ai-mode button .ic { width: 14px; height: 14px; margin-right: 6px; }
+.ai-remote { display: flex; flex-direction: column; gap: 8px; }
+.ai-remote .ex-row label { width: 60px; flex: none; }
+.ai-test-row { display: flex; align-items: center; gap: 10px; }
+.ai-test-row .chip-btn { padding: 0 10px; flex: none; }
+.ai-state.err { color: var(--danger); }
 /* импорт по ссылке */
 .lp-head { gap: 6px; }
 .lp-head > span { margin-left: auto; }

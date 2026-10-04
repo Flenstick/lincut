@@ -68,11 +68,19 @@ def serve(models):
         if q.get('cmd') == 'quit':
             break
         try:
-            key = (q['video'], round(float(q['ss']), 4), int(q.get('maxside', 1024)))
+            # кадр — из видео (ss) или готовой картинкой (image: путь) — так работает сервер нейросетей
+            key = (q.get('image') or q['video'], round(float(q.get('ss', 0)), 4), int(q.get('maxside', 1024)))
             if cur != key:
-                png = subprocess.run(['ffmpeg', '-v', 'error', '-ss', str(q['ss']), '-i', q['video'], '-frames:v', '1', '-an',
-                                      '-vf', scale_vf(key[2]), '-f', 'image2pipe', '-c:v', 'png', '-'], check=True, capture_output=True).stdout
-                img = np.array(Image.open(io.BytesIO(png)).convert('RGB'))
+                if q.get('image'):
+                    img = Image.open(q['image']).convert('RGB')
+                    m = key[2] / max(img.size)
+                    if m < 1:
+                        img = img.resize((round(img.size[0] * m), round(img.size[1] * m)), Image.LANCZOS)
+                    img = np.array(img)
+                else:
+                    png = subprocess.run(['ffmpeg', '-v', 'error', '-ss', str(q['ss']), '-i', q['video'], '-frames:v', '1', '-an',
+                                          '-vf', scale_vf(key[2]), '-f', 'image2pipe', '-c:v', 'png', '-'], check=True, capture_output=True).stdout
+                    img = np.array(Image.open(io.BytesIO(png)).convert('RGB'))
                 with torch.inference_mode(), autocast(dev):
                     pred.set_image(img)
                 cur = key

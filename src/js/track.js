@@ -21,7 +21,7 @@ const Track = {
     window.api.onTrkProgress((m) => {
       if (m.stage && this.installProgress) this.installProgress(m);
       const j = m.name && this.jobs[m.name];
-      if (j) { j.p = m.p; VoiceSep.redraw(); }
+      if (j) { j.p = m.p; j.pos = m.stage === 'queue' ? m.pos : 0; VoiceSep.redraw(); }
     });
   },
   setEngine(e) { this.engine = e; try { localStorage.setItem('lc.trkEngine', e); } catch { } },

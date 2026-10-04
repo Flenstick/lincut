@@ -190,10 +190,10 @@ const Inspector = {
     const sec = this.section(body, 'Трекинг');
     const f = c.follow, j = Track.jobFor(c);
     if (j) {
-      const st = h(`<div class="vs-state"><i class="spin"></i><span>Ищем объект на кадрах… ${Math.round(j.p * 100)}%</span><button class="link">Отмена</button></div>`);
+      const st = h(`<div class="vs-state"><i class="spin"></i><span>Ищем объект на кадрах… ${jobPct(j)}</span><button class="link">Отмена</button></div>`);
       $('button', st).onclick = () => Track.cancel(c);
       sec.appendChild(st);
-      this.refreshers.push(() => { const jj = Track.jobFor(c); if (jj) $('span', st).textContent = `Ищем объект на кадрах… ${Math.round(jj.p * 100)}%`; });
+      this.refreshers.push(() => { const jj = Track.jobFor(c); if (jj) $('span', st).textContent = `Ищем объект на кадрах… ${jobPct(jj)}`; });
       return;
     }
     const modes = c.kind === 'video' ? ['attach', 'camera', 'lock'] : ['attach'];
@@ -358,7 +358,7 @@ const Inspector = {
       const j = VoiceSep.jobFor(c), ready = VoiceSep.stemFor(c);
       state.innerHTML = !c.voiceMode ? `${icon('info')}<span>Уберите голос, чтобы переозвучить момент, или оставьте только голос без музыки и шумов.</span>`
         : ready ? `${icon('check')}<span>${c.voiceMode === 'bg' ? 'Голос удалён — слышен только фон' : 'Оставлен только голос'}</span>`
-        : `<i class="spin"></i><span>Нейросеть обрабатывает звук… ${j ? Math.round(j.p * 100) + '%' : ''}</span>${j ? '<button class="link vs-cancel">Отмена</button>' : ''}`;
+        : `<i class="spin"></i><span>Нейросеть обрабатывает звук… ${j ? jobPct(j) : ''}</span>${j ? '<button class="link vs-cancel">Отмена</button>' : ''}`;
       state.classList.toggle('ok', !!(c.voiceMode && ready));
       const cancel = $('.vs-cancel', state);
       if (cancel) cancel.onclick = () => { VoiceSep.cancelAll(); VoiceSep.set([c], null); };
@@ -813,10 +813,10 @@ const Inspector = {
     }
     if (Stab.on(c)) { sec.appendChild(h(`<div class="vs-state">${icon('info')}<span>Не работает вместе со стабилизацией.</span></div>`)); return; }
     if (j) {
-      const st = h(`<div class="vs-state"><i class="spin"></i><span>Нейросеть вырезает объект… ${Math.round(j.p * 100)}%</span><button class="link">Отмена</button></div>`);
+      const st = h(`<div class="vs-state"><i class="spin"></i><span>Нейросеть вырезает объект… ${jobPct(j)}</span><button class="link">Отмена</button></div>`);
       $('button', st).onclick = () => Roto.cancel(c);
       sec.appendChild(st);
-      this.refreshers.push(() => { const jj = Roto.jobFor(c); if (jj) $('span', st).textContent = `Нейросеть вырезает объект… ${Math.round(jj.p * 100)}%`; });
+      this.refreshers.push(() => { const jj = Roto.jobFor(c); if (jj) $('span', st).textContent = `Нейросеть вырезает объект… ${jobPct(jj)}`; });
       return;
     }
     if (P) {

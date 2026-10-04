@@ -368,7 +368,7 @@ const Timeline = {
     if (c.anim && (c.anim.in !== 'none' || c.anim.out !== 'none')) badges += icon('sparkles');
     if (c.voiceMode) {
       const j = VoiceSep.jobFor(c), ready = VoiceSep.stemFor(c);
-      badges += `<b class="vs-badge ${ready ? '' : 'busy'}">${icon(VOICE_MODES[c.voiceMode].icon)}${ready ? VOICE_MODES[c.voiceMode].short : j ? 'Нейросеть ' + Math.round(j.p * 100) + '%' : 'Ожидание…'}</b>`;
+      badges += `<b class="vs-badge ${ready ? '' : 'busy'}">${icon(VOICE_MODES[c.voiceMode].icon)}${ready ? VOICE_MODES[c.voiceMode].short : j ? 'Нейросеть ' + jobPct(j) : 'Ожидание…'}</b>`;
     }
     if (textAnimOn(c)) badges += icon('textAnim');
     if (mblurOn(c)) badges += icon('wind');
@@ -376,10 +376,10 @@ const Timeline = {
     // клип служит слоем-маской другому — сам не показывается
     if (store.p && matteSources().has(c.id)) { badges += `<b class="vs-badge">${icon('matte')}Маска</b>`; el.classList.add('matte-src'); }
     const rj = Roto.jobFor(c);
-    if (rj) badges += `<b class="vs-badge busy">${icon('magicWand')}Вырезание ${Math.round(rj.p * 100)}%</b>`;
+    if (rj) badges += `<b class="vs-badge busy">${icon('magicWand')}Вырезание ${jobPct(rj)}</b>`;
     else if (Roto.on(c)) badges += icon('magicWand');
     const tj = Track.jobFor(c);
-    if (tj) badges += `<b class="vs-badge busy">${icon('track')}Трекинг ${Math.round(tj.p * 100)}%</b>`;
+    if (tj) badges += `<b class="vs-badge busy">${icon('track')}Трекинг ${jobPct(tj)}</b>`;
     else if (c.follow) badges += icon('track');
     if (Stab.on(c)) {
       const j = Stab.jobFor(c), ready = Stab.fileFor(c);

@@ -11,7 +11,7 @@ const Roto = {
   init() {
     window.api.onRotoProgress((m) => {
       const j = this.jobs[m.name];
-      if (j) { j.p = m.p; VoiceSep.redraw(); }
+      if (j) { j.p = m.p; j.pos = m.stage === 'queue' ? m.pos : 0; VoiceSep.redraw(); }
     });
     bus.on('time', () => { if (this.pick && !Player.playing) this.retarget(); });
   },

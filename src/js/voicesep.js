@@ -14,7 +14,7 @@ const VoiceSep = {
     window.api.onSepProgress((m) => {
       if (m.stage && this.installProgress) this.installProgress(m);
       const j = m.name && this.jobs[m.name];
-      if (j) { j.p = m.p; this.redraw(); }
+      if (j) { j.p = m.p; j.pos = m.stage === 'queue' ? m.pos : 0; this.redraw(); }
     });
     bus.on('project', debounce(() => this.autoEnsure(), 400));
   },

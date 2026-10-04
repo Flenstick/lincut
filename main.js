@@ -598,6 +598,110 @@ ipcMain.handle('export:run', (e, args, total) => new Promise((resolve) => {
 
 ipcMain.handle('export:cancel', () => { if (exportProc) exportProc.kill('SIGTERM'); });
 
+// ---------------------------------------------------------------- сервер нейросетей
+// Режим «На сервере»: «Голос и фон», трекинг и вырезание объекта считает другой компьютер (server/lincut_server.py).
+// Отправляется только нужный кусок (звук или уменьшенное видео, для выделения — один кадр), результат кладётся
+// туда же и в том же виде, что у локальной нейросети, — остальной код разницы не видит.
+// Адрес — сам сервер (http://192.168.0.107:8765) или справочная на сайте (…/ai_server.php): у сервера в интернете
+// адрес меняется при каждом запуске (Cloudflare Tunnel), справочная знает текущий.
+const aiCfg = (c) => {
+  const cfg = { mode: c && c.mode === 'remote' ? 'remote' : 'local', url: String((c && c.url) || '').trim().replace(/\/+$/, ''), key: String((c && c.key) || '').trim() };
+  if (cfg.url && !/^https?:\/\//.test(cfg.url)) cfg.url = (/\.php$/.test(cfg.url) ? 'https://' : 'http://') + cfg.url;
+  return cfg;
+};
+let AI = aiCfg(null);
+const remoteOn = () => AI.mode === 'remote' && !!AI.url;
+ipcMain.handle('ai:config', (e, c) => { AI = aiCfg(c); return true; });
+const sleepMs = (ms) => new Promise(r => setTimeout(r, ms));
+const aiDir = {};   // справочная → { url, t }
+async function aiBase(cfg, fresh) {
+  if (!/\.php$/.test(cfg.url)) return cfg.url;
+  const c = aiDir[cfg.url];
+  if (c && !fresh && Date.now() - c.t < 10 * 60000) return c.url;
+  let d;
+  try {
+    d = await (await fetch(cfg.url, { signal: AbortSignal.timeout(10000) })).json();
+  } catch {
+    throw new Error('Не удалось узнать адрес сервера нейросетей у сайта — нет сети или сайт недоступен');
+  }
+  // ноутбук напоминает о себе каждые 5 минут; молчит 15 — значит, выключен или уснул
+  if (!d.url || d.age > 15 * 60) throw new Error('Сервер нейросетей сейчас выключен' + (d.url ? '' : ' (компьютер с видеокартой не в сети)'));
+  aiDir[cfg.url] = { url: d.url, t: Date.now() };
+  return d.url;
+}
+async function aiApi(p, opts = {}, cfg = AI) {
+  let r, base;
+  for (let i = 0; i < 2; i++) {
+    base = await aiBase(cfg, i > 0);
+    try {
+      r = await fetch(base + p, { ...opts, headers: { Authorization: 'Bearer ' + cfg.key, ...(opts.headers || {}) }, signal: AbortSignal.timeout(opts.timeout || 30000) });
+      // туннель без сервера за ним (ноутбук перезапустился с новым адресом) — спросить справочную заново
+      if (r.status === 530) { r = null; if (/\.php$/.test(cfg.url)) continue; }
+      break;
+    } catch (e) {
+      r = null;
+      if (!/\.php$/.test(cfg.url) || opts.body) break;   // присланный файл повторно не отправляем
+    }
+  }
+  if (!r) throw new Error('Сервер нейросетей недоступен (' + base + ') — он выключен или нет сети');
+  if (!r.ok) {
+    let m = '';
+    try { m = (await r.json()).error; } catch { }
+    if (r.status === 413 && !m) m = 'Кусок видео слишком большой для отправки через интернет (больше 100 МБ) — выдели фрагмент короче';
+    const er = new Error(m || `Сервер нейросетей ответил ошибкой ${r.status}`);
+    er.status = r.status;
+    throw er;
+  }
+  return r;
+}
+ipcMain.handle('ai:test', async (e, c) => {
+  const cfg = aiCfg(c);
+  delete aiDir[cfg.url];   // проверка — всегда со свежим адресом от справочной
+  return (await aiApi('/api/status', { timeout: 15000 }, cfg)).json();
+});
+// задача на сервере: отправить файл, ждать (очередь → работа), вернуть id и список готовых файлов
+async function aiJob(kind, params, file, onP, ref) {
+  const fd = new FormData();
+  fd.append('meta', JSON.stringify({ kind, params }));
+  fd.append('file', new Blob([fs.readFileSync(file)]), path.basename(file));
+  onP(0.01, 'upload');
+  const j = await (await aiApi('/api/jobs', { method: 'POST', body: fd, timeout: 30 * 60000 })).json();
+  ref.id = j.id;
+  let fails = 0;
+  for (;;) {
+    if (ref.canceled) { await aiApi(`/api/jobs/${j.id}`, { method: 'DELETE' }).catch(() => { }); throw new Error('Отменено'); }
+    await sleepMs(1000);
+    let st;
+    try { st = await (await aiApi(`/api/jobs/${j.id}`)).json(); fails = 0; } catch (e) { if (e.status || ++fails > 20) throw e; continue; }
+    if (st.state === 'queued') onP(0.03, 'queue', st.pos);
+    else if (st.state === 'running') onP(0.05 + st.p * 0.9, 'run');
+    else if (st.state === 'done') return j.id;
+    else throw new Error(st.error || 'Ошибка на сервере нейросетей');
+  }
+}
+async function aiFetch(id, name, dst) {
+  const r = await aiApi(`/api/jobs/${id}/files/${name}`, { timeout: 30 * 60000 });
+  fs.writeFileSync(dst, Buffer.from(await r.arrayBuffer()));
+}
+const aiDone = (id) => aiApi(`/api/jobs/${id}`, { method: 'DELETE' }).catch(() => { });
+// кусок видео для сервера: длинная сторона ≤ 1024, все кадры источника (без пересчёта частоты)
+const aiCut = (src, ss, dur, out) => run('ffmpeg', ['-y', '-v', 'error', '-ss', String(ss), '-t', String(dur), '-i', src, '-an', '-fps_mode', 'passthrough',
+  '-vf', "scale=w='if(gt(iw,ih),min(1024,iw),-2)':h='if(gt(iw,ih),-2,min(1024,ih))'", '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', out]);
+// распаковка tar (ustar) — маски ротоскопа
+function untar(buf, dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  for (let o = 0; o + 512 <= buf.length;) {
+    const name = buf.toString('utf8', o, o + 100).replace(/\0.*$/s, '');
+    if (!name) break;
+    const size = parseInt(buf.toString('ascii', o + 124, o + 136).replace(/\0.*$/s, '').trim() || '0', 8);
+    const type = String.fromCharCode(buf[o + 156] || 48);
+    if ((type === '0' || type === '\0') && !name.includes('..')) fs.writeFileSync(path.join(dir, path.basename(name)), buf.subarray(o + 512, o + 512 + size));
+    o += 512 + Math.ceil(size / 512) * 512;
+  }
+}
+const aiRefs = { sep: null, trk: null, roto: null };
+const aiCancel = (k) => { if (aiRefs[k]) aiRefs[k].canceled = true; };
+
 // ---------------------------------------------------------------- голос и фон (нейросеть)
 // Отдельное окружение Python в ~/.local/share/lincut/sep, в систему ничего не ставится.
 const SEP_HOME = IS_WIN ? path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'LinCut') : path.join(os.homedir(), '.local', 'share', 'lincut');
@@ -635,7 +739,7 @@ function spawnLines(cmd, args, onLine) {
   });
 }
 
-ipcMain.handle('sep:status', () => ({ env: fs.existsSync(SEP_PY), model: fs.existsSync(path.join(SEP_MODELS, SEP_MODEL)) }));
+ipcMain.handle('sep:status', () => remoteOn() ? { env: true, model: true, remote: true } : ({ env: fs.existsSync(SEP_PY), model: fs.existsSync(path.join(SEP_MODELS, SEP_MODEL)) }));
 
 ipcMain.handle('sep:install', () => (sepChain = sepChain.catch(() => { }).then(async () => {
   fs.mkdirSync(SEP_HOME, { recursive: true });
@@ -660,6 +764,19 @@ ipcMain.handle('sep:install', () => (sepChain = sepChain.catch(() => { }).then(a
 // job = { path, a, b, outDir, name }: вырезаем кусок звука и делим его на голос и фон
 ipcMain.handle('sep:run', (e, job) => (sepChain = sepChain.catch(() => { }).then(async () => {
   fs.mkdirSync(job.outDir, { recursive: true });
+  if (remoteOn()) {
+    const flac = path.join(os.tmpdir(), `lincut-sep-${process.pid}-${job.name}.flac`), ref = aiRefs.sep = {};
+    sepSend({ name: job.name, p: 0 });
+    try {
+      await run('ffmpeg', ['-y', '-v', 'error', '-ss', String(job.a), '-t', String(job.b - job.a), '-i', job.path, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'flac', flac]);
+      const id = await aiJob('sep', {}, flac, (p, stage, pos) => sepSend({ name: job.name, p, stage, pos }), ref);
+      const voice = path.join(job.outDir, job.name + '_voice.flac'), bg = path.join(job.outDir, job.name + '_bg.flac');
+      await aiFetch(id, 'voice.flac', voice);
+      await aiFetch(id, 'bg.flac', bg);
+      aiDone(id);
+      return { voice, bg };
+    } finally { fs.rmSync(flac, { force: true }); aiRefs.sep = null; }
+  }
   const wav = path.join(os.tmpdir(), `lincut-sep-${process.pid}-${job.name}.wav`);
   sepSend({ name: job.name, p: 0 });
   try {
@@ -675,7 +792,7 @@ ipcMain.handle('sep:run', (e, job) => (sepChain = sepChain.catch(() => { }).then
     fs.rmSync(wav, { force: true });
   }
 })));
-ipcMain.handle('sep:cancel', () => { if (sepProc) sepProc.kill('SIGTERM'); });
+ipcMain.handle('sep:cancel', () => { aiCancel('sep'); if (sepProc) sepProc.kill('SIGTERM'); });
 
 // ---------------------------------------------------------------- трекинг объекта (SAM 2 / OpenCV)
 // Живёт в том же окружении Python, что и нейросеть «Голос и фон»; модель — в ~/.local/share/lincut/models
@@ -688,7 +805,7 @@ const trkPkgs = () => new Promise((resolve) => {
   if (!fs.existsSync(SEP_PY)) return resolve(false);
   execFile(SEP_PY, ['-c', 'import sam2, cv2'], (err) => resolve(!err));
 });
-ipcMain.handle('trk:status', async () => ({ env: fs.existsSync(SEP_PY), pkgs: await trkPkgs(), model: fs.existsSync(path.join(SEP_MODELS, TRK_CKPT)) }));
+ipcMain.handle('trk:status', async () => remoteOn() ? { env: true, pkgs: true, model: true, remote: true } : ({ env: fs.existsSync(SEP_PY), pkgs: await trkPkgs(), model: fs.existsSync(path.join(SEP_MODELS, TRK_CKPT)) }));
 ipcMain.handle('trk:install', () => (trkChain = trkChain.catch(() => { }).then(async () => {
   fs.mkdirSync(SEP_MODELS, { recursive: true });
   if (!fs.existsSync(SEP_PY)) {
@@ -720,7 +837,25 @@ ipcMain.handle('trk:install', () => (trkChain = trkChain.catch(() => { }).then(a
   return true;
 })));
 // job = { name, path, a, b, t0, box: [x, y, w, h], engine, fps }
-ipcMain.handle('trk:run', (e, job) => (trkChain = trkChain.catch(() => { }).then(() => new Promise((resolve, reject) => {
+async function trkRemote(job) {
+  const cut = path.join(os.tmpdir(), `lincut-trk-${process.pid}-${job.name}.mp4`), ref = aiRefs.trk = {};
+  trkSend({ name: job.name, p: 0 });
+  try {
+    await aiCut(job.path, job.a, job.b - job.a, cut);
+    const id = await aiJob('trk', { dur: job.b - job.a, t0: job.t0 - job.a, box: job.box, engine: job.engine || 'sam2', fps: job.fps || 30 }, cut,
+      (p, stage, pos) => trkSend({ name: job.name, p, stage, pos }), ref);
+    const out = cut + '.json';
+    await aiFetch(id, 'track.json', out);
+    aiDone(id);
+    const r = JSON.parse(fs.readFileSync(out, 'utf8'));
+    fs.rmSync(out, { force: true });
+    // время на сервере — от начала присланного куска
+    r.a = job.a;
+    for (const p of r.pts) p[0] = Math.round((p[0] + job.a) * 1e5) / 1e5;
+    return r;
+  } finally { fs.rmSync(cut, { force: true }); aiRefs.trk = null; }
+}
+ipcMain.handle('trk:run', (e, job) => remoteOn() ? (trkChain = trkChain.catch(() => { }).then(() => trkRemote(job))) : (trkChain = trkChain.catch(() => { }).then(() => new Promise((resolve, reject) => {
   trkCanceled = false;
   const out = path.join(os.tmpdir(), `lincut-trk-${process.pid}-${job.name}.json`);
   const p = spawn(SEP_PY, [TRK_SCRIPT, job.path, '--a', String(job.a), '--b', String(job.b), '--t0', String(job.t0), '--box', ...job.box.map(String),
@@ -742,7 +877,7 @@ ipcMain.handle('trk:run', (e, job) => (trkChain = trkChain.catch(() => { }).then
     try { resolve(JSON.parse(fs.readFileSync(out, 'utf8'))); } catch (x) { reject(x); } finally { fs.rmSync(out, { force: true }); }
   });
 }))));
-ipcMain.handle('trk:cancel', () => { trkCanceled = true; if (trkProc) trkProc.kill('SIGTERM'); });
+ipcMain.handle('trk:cancel', () => { aiCancel('trk'); trkCanceled = true; if (trkProc) trkProc.kill('SIGTERM'); });
 
 // ---------------------------------------------------------------- ротоскоп (Roto Brush, SAM 2)
 // Живой процесс для выделения (модель загружена, маска кадра за доли секунды) и долгий проход по всем кадрам.
@@ -786,7 +921,30 @@ function rotoStop() {
   setTimeout(() => { try { p.kill('SIGTERM'); } catch { } }, 1500);
 }
 // job = { video, ss, pts, box, out? } → { out, score }
+const aiFrames = new Map(); // `${video}|${ss}` → { file, fid }
+async function rotoMaskRemote(job) {
+  const key = job.video + '|' + job.ss;
+  let fr = aiFrames.get(key);
+  if (!fr) {
+    const file = path.join(os.tmpdir(), `lincut-frame-${process.pid}-${aiFrames.size}.jpg`);
+    await run('ffmpeg', ['-y', '-v', 'error', '-ss', String(job.ss), '-i', job.video, '-frames:v', '1', '-an',
+      '-vf', "scale=w='if(gt(iw,ih),min(1024,iw),-2)':h='if(gt(iw,ih),-2,min(1024,ih))'", '-q:v', '2', file]);
+    fr = { file, fid: crypto.createHash('sha1').update(fs.readFileSync(file)).digest('hex') };
+    aiFrames.set(key, fr);
+  }
+  const ask = () => aiApi('/api/mask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fid: fr.fid, pts: job.pts || [], box: job.box || null }), timeout: 90000 });
+  let r;
+  try { r = await ask(); } catch (e) {
+    if (e.status !== 409) throw e;
+    await aiApi(`/api/frames/${fr.fid}`, { method: 'PUT', body: fs.readFileSync(fr.file), timeout: 60000 });
+    r = await ask();
+  }
+  const out = path.join(os.tmpdir(), `lincut-roto-${process.pid}-${++rotoReq}.png`);
+  fs.writeFileSync(out, Buffer.from(await r.arrayBuffer()));
+  return { out, score: Number(r.headers.get('x-score')) || 0 };
+}
 ipcMain.handle('roto:mask', async (e, job) => {
+  if (remoteOn()) return rotoMaskRemote(job);
   await rotoServe();
   const id = ++rotoReq;
   const out = job.out || path.join(os.tmpdir(), `lincut-roto-${process.pid}-${id}.png`);
@@ -797,7 +955,26 @@ ipcMain.handle('roto:mask', async (e, job) => {
 ipcMain.handle('roto:stop', () => rotoStop());
 let rotoChain = Promise.resolve(), rotoProc = null, rotoCanceled = false;
 // job = { name, video, a, b, fps, prompts: [{ k, pts, box }], out } → meta
-ipcMain.handle('roto:run', (e, job) => (rotoChain = rotoChain.catch(() => { }).then(() => new Promise((resolve, reject) => {
+async function rotoRemote(job) {
+  const ss = Math.max(0, job.a - 0.25 / job.fps);
+  const cut = path.join(os.tmpdir(), `lincut-rotoin-${process.pid}-${job.name}.mp4`), ref = aiRefs.roto = {};
+  rotoSend({ name: job.name, p: 0 });
+  try {
+    await aiCut(job.video, ss, job.b - ss, cut);
+    const id = await aiJob('roto', { dur: job.b - ss, fps: job.fps, prompts: job.prompts }, cut, (p, stage, pos) => rotoSend({ name: job.name, p, stage, pos }), ref);
+    const tar = cut + '.tar';
+    await aiFetch(id, 'masks.tar', tar);
+    aiDone(id);
+    fs.rmSync(job.out, { recursive: true, force: true });
+    untar(fs.readFileSync(tar), job.out);
+    fs.rmSync(tar, { force: true });
+    const meta = JSON.parse(fs.readFileSync(path.join(job.out, 'meta.json'), 'utf8'));
+    meta.a = job.a;
+    fs.writeFileSync(path.join(job.out, 'meta.json'), JSON.stringify(meta));
+    return meta;
+  } finally { fs.rmSync(cut, { force: true }); aiRefs.roto = null; }
+}
+ipcMain.handle('roto:run', (e, job) => remoteOn() ? (rotoChain = rotoChain.catch(() => { }).then(() => rotoRemote(job))) : (rotoChain = rotoChain.catch(() => { }).then(() => new Promise((resolve, reject) => {
   rotoStop(); // видеопамять нужна целиком
   rotoCanceled = false;
   fs.mkdirSync(path.dirname(job.out), { recursive: true });
@@ -821,7 +998,7 @@ ipcMain.handle('roto:run', (e, job) => (rotoChain = rotoChain.catch(() => { }).t
     try { resolve(JSON.parse(fs.readFileSync(meta, 'utf8'))); } catch (x) { reject(x); }
   });
 }))));
-ipcMain.handle('roto:cancel', () => { rotoCanceled = true; if (rotoProc) rotoProc.kill('SIGTERM'); });
+ipcMain.handle('roto:cancel', () => { aiCancel('roto'); rotoCanceled = true; if (rotoProc) rotoProc.kill('SIGTERM'); });
 app.on('will-quit', () => rotoStop());
 
 // ---------------------------------------------------------------- стабилизация

@@ -15,6 +15,7 @@ const App = {
     Track.init();
     Roto.init();
     Links.init();
+    AiServer.init();
     this.bindWindow();
     Home.init();
     Player.init();
@@ -198,6 +199,7 @@ const App = {
         '-',
         { label: 'Сохранить', key: 'Ctrl+S', onClick: () => { this.save(); toast('Проект сохранён', 'ok', 1400); } },
         { label: 'Открыть папку проекта', icon: 'folder', onClick: () => window.api.openPath(store.dir) },
+        { label: AiServer.remote() ? 'Нейросети: на сервере…' : 'Нейросети: на этом компьютере…', icon: 'sparkles', onClick: () => AiServer.dialog() },
         '-',
         { label: 'На главную', icon: 'home', onClick: () => this.goHome() },
         { label: 'Выход', key: 'Ctrl+Q', onClick: async () => { await this.save(); window.api.winClose(); } },

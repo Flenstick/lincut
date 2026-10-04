@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld('api', {
   urlDownload: (job) => ipcRenderer.invoke('url:download', job),
   urlCancel: (name) => ipcRenderer.invoke('url:cancel', name),
   onUrlProgress: (cb) => { urlCbs.add(cb); return () => urlCbs.delete(cb); },
+  aiConfig: (c) => ipcRenderer.invoke('ai:config', c),
+  aiTest: (c) => ipcRenderer.invoke('ai:test', c),
   rotoMask: (job) => ipcRenderer.invoke('roto:mask', job),
   rotoStop: () => ipcRenderer.invoke('roto:stop'),
   rotoRun: (job) => ipcRenderer.invoke('roto:run', job),
