@@ -1,6 +1,24 @@
 # LinCut
 
-Простой видеоредактор для Linux с интерфейсом в стиле CapCut. Electron + FFmpeg.
+Видеоредактор для Linux и Windows с интерфейсом в стиле CapCut. Electron + FFmpeg.
+
+![LinCut — анимация текста по буквам](docs/screenshots/editor.png)
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/color.png" alt="Кривые и видеоскопы"></td>
+    <td><img src="docs/screenshots/mask.png" alt="Маска пером"></td>
+  </tr>
+  <tr>
+    <td align="center">Кривые, фильтры и видеоскопы</td>
+    <td align="center">Маска пером с анимацией формы</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/matte.png" alt="Track Matte" width="50%"><br>Track Matte — видео внутри текста</td>
+  </tr>
+</table>
+
+**[⬇ Скачать для Windows](https://github.com/Flenstick/lincut/releases/latest)**
 
 ## Запуск
 
