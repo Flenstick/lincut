@@ -1,7 +1,7 @@
 {
   "name": "lincut",
   "productName": "LinCut",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Видеоредактор для Linux и Windows в стиле CapCut",
   "main": "main.js",
   "license": "MIT",
@@ -69,9 +69,20 @@
       ],
       "language": "1049",
       "deleteAppDataOnUninstall": false
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Flenstick",
+        "repo": "lincut",
+        "releaseType": "release"
+      }
+    ]
   },
   "devDependencies": {
     "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

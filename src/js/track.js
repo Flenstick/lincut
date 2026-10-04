@@ -19,7 +19,6 @@ const Track = {
   init() {
     try { this.engine = localStorage.getItem('lc.trkEngine') || 'sam2'; } catch { }
     window.api.onTrkProgress((m) => {
-      if (m.stage && this.installProgress) this.installProgress(m);
       const j = m.name && this.jobs[m.name];
       if (j) { j.p = m.p; j.pos = m.stage === 'queue' ? m.pos : 0; VoiceSep.redraw(); }
     });
@@ -47,7 +46,7 @@ const Track = {
     const st = await window.api.trkStatus();
     this.ready = st.env && st.pkgs && st.model;
     if (this.ready || !interactive) return this.ready;
-    return this.installDialog(st.env);
+    return this.installDialog();
   },
 
   // 1) рамка вокруг объекта в превью → 2) трекинг → 3) ключевые кадры
@@ -221,38 +220,8 @@ const Track = {
     return K.filter((_, i) => keep[i]).map(k => ({ ...k, x: Math.round(k.x * 10) / 10, y: Math.round(k.y * 10) / 10, scale: Math.round(k.scale * 1e4) / 1e4 }));
   },
 
-  installDialog(hasEnv) {
-    return new Promise((resolve) => {
-      let done = false, busy = false;
-      const body = h(`<div class="sep-install">
-        <p>Для трекинга нужна нейросеть <b>SAM 2</b> — она находит объект на каждом кадре, даже если он поворачивается
-        или ненадолго скрывается. Ставится один раз в <code>${IS_WIN ? "%LOCALAPPDATA%\\LinCut" : "~/.local/share/lincut"}</code>, в систему ничего не устанавливается.</p>
-        <p class="muted">${hasEnv ? 'Окружение нейросети «Голос и фон» уже есть — докачается ≈ 250 МБ.' : 'Скачается ≈ 3 ГБ (PyTorch, модель).'} Работает на видеокарте NVIDIA; без неё — медленнее. Вместе с ней ставится быстрый трекер OpenCV.</p>
-        <div class="sep-progress hidden"><div class="exp-bar indet"><i></i></div><div class="sep-line muted small"></div></div>
-      </div>`);
-      modal({ title: 'Нейросеть для трекинга', body, width: 480, onClose: () => { this.installProgress = null; resolve(done); }, buttons: [
-        { label: 'Отмена' },
-        { label: 'Установить', primary: true, keep: true, onClick: async (close, root) => {
-          if (busy) return false;
-          busy = true;
-          const btn = $('.modal-foot .primary-btn', root);
-          btn.disabled = true; btn.textContent = 'Установка…';
-          $('.sep-progress', body).classList.remove('hidden');
-          this.installProgress = (m) => { $('.sep-line', body).textContent = m.text; };
-          try {
-            await window.api.trkInstall();
-            this.ready = true; done = true; busy = false;
-            toast('Нейросеть для трекинга установлена', 'ok');
-            close(true);
-          } catch (e) {
-            busy = false;
-            btn.disabled = false; btn.textContent = 'Повторить';
-            $('.exp-bar', body).classList.remove('indet');
-            $('.sep-line', body).textContent = 'Ошибка: ' + String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-          }
-          return false;
-        } },
-      ] });
-    });
+  installDialog() {
+    return AiModels.installDialog('track', 'Нейросеть для трекинга', `Для трекинга и «Вырезать объект» нужна нейросеть <b>SAM 2</b> — она находит объект на каждом кадре, даже если он
+      поворачивается или ненадолго скрывается. Загружается один раз, в систему ничего не устанавливается. Вместе с ней ставится быстрый трекер OpenCV.`).then((ok) => { if (ok) this.ready = true; return ok; });
   },
 };

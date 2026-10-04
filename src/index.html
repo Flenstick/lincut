@@ -14,6 +14,7 @@
   <header class="titlebar drag">
     <span class="logo"></span><span class="tb-app">LinCut</span>
     <span class="tb-grow"></span>
+    <span class="tb-tasks" data-tasks></span>
     <span class="win-space"></span>
   </header>
   <div class="home-body">
@@ -24,6 +25,8 @@
       <div class="home-side-foot">
         <div class="side-label">Тема</div>
         <div class="theme-list" id="themeList"></div>
+        <div class="side-label">Нейросети</div>
+        <button class="path-link" id="homeAi">Загрузка и настройка…</button>
         <div class="side-label">Папка проектов</div>
         <button class="path-link" id="projectsPath" title="Открыть папку"></button>
       </div>
@@ -75,6 +78,7 @@
       <span class="autosave" id="autosave"></span>
     </div>
     <div class="tb-right">
+      <span class="tb-tasks" data-tasks></span>
       <button class="icon-btn" id="btnShortcuts" title="Горячие клавиши"><span data-i="keyboard"></span></button>
       <button class="export-btn" id="btnExport"><span data-i="upload"></span>Экспорт</button>
       <span class="win-space"></span>

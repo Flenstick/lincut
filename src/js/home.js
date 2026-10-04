@@ -12,6 +12,7 @@ const Home = {
       try { localStorage.setItem('lc.view', this.view); } catch { }
       this.draw();
     };
+    $('#homeAi').onclick = () => AiServer.dialog();
     $('#projectsPath').onclick = async () => window.api.openPath((await window.api.paths()).projects);
     this.drawThemes();
     bus.on('theme', () => this.drawThemes());

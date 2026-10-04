@@ -313,6 +313,35 @@ input, textarea, select { font: inherit; color: inherit; }
 .ai-test-row { display: flex; align-items: center; gap: 10px; }
 .ai-test-row .chip-btn { padding: 0 10px; flex: none; }
 .ai-state.err { color: var(--danger); }
+.ai-local { display: flex; flex-direction: column; gap: 10px; }
+.ai-parts { display: flex; flex-direction: column; border-radius: var(--radius-sm); background: var(--panel-2); overflow: hidden; }
+.ai-part { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+.ai-part + .ai-part { border-top: 1px solid var(--line); }
+.ai-part-ic { width: 28px; height: 28px; border-radius: 7px; background: var(--panel-3); display: flex; align-items: center; justify-content: center; flex: none; color: var(--text-2); }
+.ai-part-ic .ic { width: 15px; height: 15px; }
+.ai-part-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.ai-part-txt b { font-weight: 600; }
+.ai-part-txt span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-part-st { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.ai-part-st.ok { color: var(--ok); }
+.ai-part-st .ic { width: 13px; height: 13px; }
+.ai-dl-row { display: flex; align-items: center; gap: 10px; min-height: 30px; }
+.ai-dl-row button { height: 30px; padding: 0 14px; border-radius: var(--radius-btn); display: inline-flex; align-items: center; gap: 6px; flex: none; font-weight: 600; }
+.ai-dl-row .ic { width: 14px; height: 14px; }
+.ai-dl-size { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-prog { display: flex; flex-direction: column; gap: 6px; }
+.ai-prog .exp-bar { height: 4px; }
+.ai-prog-row { display: flex; justify-content: space-between; gap: 12px; min-height: 16px; }
+.ai-stage { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-nums { flex: none; font-variant-numeric: tabular-nums; }
+/* фоновые задачи в шапке: загрузка нейросетей, обновление */
+.tb-tasks { display: inline-flex; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
+.tb-tasks:empty { display: none; }
+.tb-task { height: 26px; padding: 0 10px 0 8px; border-radius: var(--radius-btn); background: var(--panel-2); color: var(--text-2); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.tb-task:hover { background: var(--panel-3); color: var(--text); }
+.tb-task .ic { width: 14px; height: 14px; }
+.tb-task.ready { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.upd-dlg p { margin: 0 0 8px; line-height: 1.5; }
 /* импорт по ссылке */
 .lp-head { gap: 6px; }
 .lp-head > span { margin-left: auto; }

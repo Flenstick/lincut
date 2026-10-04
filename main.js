@@ -90,8 +90,48 @@ app.whenReady().then(() => {
   });
   session.defaultSession.setPermissionCheckHandler(() => true);
   createWindow();
+  initUpdater();
 });
 app.on('window-all-closed', () => app.quit());
+
+// ---------------------------------------------------------------- автообновление (Windows)
+// electron-updater смотрит релизы GitHub (Flenstick/lincut: latest.yml + Setup.exe), новую версию качает сам
+// в фоне. Ставится по кнопке «Перезапустить и обновить» в шапке или молча при выходе из программы.
+// На Linux программа запускается из исходников (git pull) — там обновлений нет.
+// LINCUT_UPDATE_URL — свой адрес с latest.yml (проверка обновления под wine с локального сервера).
+let updater = null;
+const upd = { state: 'off', current: app.getVersion(), version: '', percent: 0, speed: 0, error: '' };
+const updSend = () => { if (win && !win.isDestroyed()) win.webContents.send('upd:state', upd); };
+const updSet = (o) => { Object.assign(upd, o); updSend(); };
+function initUpdater() {
+  if (!IS_WIN || !app.isPackaged || process.env.LINCUT_NO_UPDATE) return;
+  try { updater = require('electron-updater').autoUpdater; } catch { return; }
+  if (process.env.LINCUT_UPDATE_URL) updater.setFeedURL({ provider: 'generic', url: process.env.LINCUT_UPDATE_URL });
+  updater.logger = process.env.LINCUT_LOG ? { info: (m) => fs.appendFileSync(process.env.LINCUT_LOG, '[upd] ' + m + '\n'), warn: (m) => fs.appendFileSync(process.env.LINCUT_LOG, '[upd] ' + m + '\n'), error: (m) => fs.appendFileSync(process.env.LINCUT_LOG, '[upd] ' + m + '\n'), debug: () => { } } : null;
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = true;
+  updater.disableWebInstaller = true;
+  updater.on('checking-for-update', () => { if (upd.state !== 'downloading' && upd.state !== 'ready') updSet({ state: 'checking', error: '' }); });
+  updater.on('update-not-available', () => updSet({ state: 'none' }));
+  updater.on('update-available', (i) => updSet({ state: 'downloading', version: i.version, percent: 0 }));
+  updater.on('download-progress', (p) => updSet({ state: 'downloading', percent: p.percent, speed: p.bytesPerSecond }));
+  updater.on('update-downloaded', (i) => updSet({ state: 'ready', version: i.version, percent: 100 }));
+  updater.on('error', (e) => { if (upd.state !== 'ready') updSet({ state: 'error', error: String((e && e.message) || e).split('\n')[0] }); });
+  upd.state = 'idle';
+  const check = () => { if (upd.state !== 'downloading' && upd.state !== 'ready') updater.checkForUpdates().catch(() => { }); };
+  setTimeout(check, 8000);
+  setInterval(check, 6 * 3600 * 1000);
+}
+ipcMain.handle('upd:state', () => upd);
+ipcMain.handle('upd:check', async () => {
+  if (!updater) return upd;
+  if (upd.state === 'downloading' || upd.state === 'ready') return upd;
+  updSet({ state: 'checking', error: '' });
+  try { await updater.checkForUpdates(); } catch (e) { updSet({ state: 'error', error: String(e.message || e).split('\n')[0] }); }
+  return upd;
+});
+// тихая установка (/S) в ту же папку и запуск новой версии
+ipcMain.handle('upd:install', () => { if (updater && upd.state === 'ready') setImmediate(() => updater.quitAndInstall(true, true)); });
 
 // ---------------------------------------------------------------- утилиты
 function run(cmd, args, opts = {}) {
@@ -704,11 +744,10 @@ const aiCancel = (k) => { if (aiRefs[k]) aiRefs[k].canceled = true; };
 
 // ---------------------------------------------------------------- голос и фон (нейросеть)
 // Отдельное окружение Python в ~/.local/share/lincut/sep, в систему ничего не ставится.
-const SEP_HOME = IS_WIN ? path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'LinCut') : path.join(os.homedir(), '.local', 'share', 'lincut');
+// LINCUT_AI_HOME — другая папка (проверка установки с нуля, не трогая настоящую)
+const SEP_HOME = process.env.LINCUT_AI_HOME ? path.resolve(process.env.LINCUT_AI_HOME) : IS_WIN ? path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'LinCut') : path.join(os.homedir(), '.local', 'share', 'lincut');
 const SEP_ENV = path.join(SEP_HOME, 'sep');
 const SEP_PY = IS_WIN ? path.join(SEP_ENV, 'Scripts', 'python.exe') : path.join(SEP_ENV, 'bin', 'python');
-// на Windows PyTorch с CUDA — только из индекса pytorch.org (в PyPI под Windows сборка без видеокарты)
-const TORCH_IDX = IS_WIN ? ['--extra-index-url', 'https://download.pytorch.org/whl/cu128', '--index-strategy', 'unsafe-best-match'] : [];
 const SEP_MODELS = path.join(SEP_HOME, 'models');
 const SEP_MODEL = 'model_bs_roformer_ep_317_sdr_12.9755.ckpt';
 const SEP_SCRIPT = path.join(__dirname, 'tools', 'separate.py');
@@ -716,10 +755,10 @@ const sepSend = (msg) => { if (win) win.webContents.send('sep:progress', msg); }
 let sepProc = null, sepChain = Promise.resolve();
 
 // процесс с построчным выводом; при ошибке — хвост журнала
-function spawnLines(cmd, args, onLine) {
+function spawnLines(cmd, args, onLine, env) {
   return new Promise((resolve, reject) => {
     // SAM2_BUILD_CUDA=0 — пакет sam2 не собирает расширение CUDA (на Windows без компилятора иначе не ставится)
-    const pr = spawn(cmd, args, { env: { ...process.env, PYTHONUNBUFFERED: '1', SAM2_BUILD_CUDA: '0' }, windowsHide: true });
+    const pr = spawn(cmd, args, { env: { ...process.env, PYTHONUNBUFFERED: '1', SAM2_BUILD_CUDA: '0', ...env }, windowsHide: true });
     sepProc = pr;
     let tail = '', out = '';
     const feed = (buf, isOut) => {
@@ -740,26 +779,6 @@ function spawnLines(cmd, args, onLine) {
 }
 
 ipcMain.handle('sep:status', () => remoteOn() ? { env: true, model: true, remote: true } : ({ env: fs.existsSync(SEP_PY), model: fs.existsSync(path.join(SEP_MODELS, SEP_MODEL)) }));
-
-ipcMain.handle('sep:install', () => (sepChain = sepChain.catch(() => { }).then(async () => {
-  fs.mkdirSync(SEP_HOME, { recursive: true });
-  if (!fs.existsSync(SEP_PY)) {
-    sepSend({ stage: 'env', text: 'Создание окружения Python…' });
-    await spawnLines('uv', ['venv', '--python', '3.12', SEP_ENV]);
-  }
-  sepSend({ stage: 'pip', text: 'Загрузка библиотек (PyTorch, CUDA)…' });
-  // audioread — забытая зависимость audio-separator 0.47
-  await spawnLines('uv', ['pip', 'install', '--python', SEP_PY, ...TORCH_IDX, 'audio-separator[gpu]', 'audioread'], (l) => {
-    const m = /(Downloading|Downloaded|Installed|Prepared|Built)\s+(.+)/.exec(l);
-    if (m) sepSend({ stage: 'pip', text: `${m[1] === 'Downloading' ? 'Загрузка' : 'Готово'}: ${m[2].trim().slice(0, 60)}` });
-  });
-  sepSend({ stage: 'model', text: 'Загрузка модели…' });
-  await spawnLines(SEP_PY, [SEP_SCRIPT, '-', SEP_MODELS, '--models', SEP_MODELS, '--model', SEP_MODEL, '--download-only'], (l) => {
-    const m = /(\d{1,3})%\|.*?([\d.]+[kMG]?)\/([\d.]+[kMG])/.exec(l);
-    if (m && /M|G/.test(m[3])) sepSend({ stage: 'model', text: `Загрузка модели… ${m[1]}% (${m[2]}Б из ${m[3]}Б)` });
-  });
-  return true;
-})));
 
 // job = { path, a, b, outDir, name }: вырезаем кусок звука и делим его на голос и фон
 ipcMain.handle('sep:run', (e, job) => (sepChain = sepChain.catch(() => { }).then(async () => {
@@ -801,41 +820,160 @@ const TRK_CKPT = 'sam2.1_hiera_small.pt';
 const TRK_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/' + TRK_CKPT;
 let trkChain = Promise.resolve(), trkProc = null, trkCanceled = false;
 const trkSend = (msg) => { if (win) win.webContents.send('trk:progress', msg); };
-const trkPkgs = () => new Promise((resolve) => {
+// ---------------------------------------------------------------- установка нейросетей
+// Одной кнопкой («Файл → Нейросети → Загрузить все») или при первом использовании функции:
+// окружение Python (uv) → все библиотеки одним `uv pip install` → модели.
+// Прогресс — в байтах: uv заранее пишет размеры больших пакетов («Downloading torch (2.4GiB)»), а сами байты
+// считает маленький прокси на 127.0.0.1, через который ходят uv и Python — видна настоящая скорость.
+// PyTorch — `--torch-backend auto`: uv смотрит драйвер NVIDIA и берёт подходящую сборку CUDA (без видеокарты — CPU);
+// раньше на Windows был жёстко cu128, и uv брал более новую сборку из PyPI — без видеокарты.
+const AI_PARTS = {
+  voice: { pkgs: ['audio-separator[gpu]', 'audioread'], mods: ['audio_separator'], models: [{ file: SEP_MODEL, size: 639362000, name: 'BS-Roformer' }] },
+  track: { pkgs: ['sam2', 'opencv-contrib-python-headless'], mods: ['sam2', 'cv2'], models: [{ file: TRK_CKPT, size: 184416285, url: TRK_URL, name: 'SAM 2' }] },
+};
+const pyHas = (mods) => new Promise((resolve) => {
   if (!fs.existsSync(SEP_PY)) return resolve(false);
-  execFile(SEP_PY, ['-c', 'import sam2, cv2'], (err) => resolve(!err));
+  // find_spec — пакет на месте, без импорта (импорт torch занял бы секунды)
+  execFile(SEP_PY, ['-c', `import importlib.util as u, sys; sys.exit(0 if all(u.find_spec(m) for m in ${JSON.stringify(mods)}) else 1)`], (err) => resolve(!err));
 });
+const modelHas = (m) => fs.existsSync(path.join(SEP_MODELS, m.file));
+ipcMain.handle('ai:status', async () => {
+  const parts = {};
+  await Promise.all(Object.entries(AI_PARTS).map(async ([k, P]) => {
+    const pkgs = await pyHas(P.mods), models = P.models.every(modelHas);
+    parts[k] = { pkgs, models, ready: pkgs && models, size: P.models.reduce((s, m) => s + (modelHas(m) ? 0 : m.size), 0) };
+  }));
+  return { env: fs.existsSync(SEP_PY), home: IS_WIN ? SEP_HOME : SEP_HOME.replace(os.homedir(), '~'), parts, busy: !!inst };
+});
+// «Готово: трекинг» — для старых вызовов (trk:status) пакеты проверяет pyHas
+const trkPkgs = () => pyHas(AI_PARTS.track.mods);
 ipcMain.handle('trk:status', async () => remoteOn() ? { env: true, pkgs: true, model: true, remote: true } : ({ env: fs.existsSync(SEP_PY), pkgs: await trkPkgs(), model: fs.existsSync(path.join(SEP_MODELS, TRK_CKPT)) }));
-ipcMain.handle('trk:install', () => (trkChain = trkChain.catch(() => { }).then(async () => {
-  fs.mkdirSync(SEP_MODELS, { recursive: true });
-  if (!fs.existsSync(SEP_PY)) {
-    trkSend({ stage: 'env', text: 'Создание окружения Python…' });
-    await spawnLines('uv', ['venv', '--python', '3.12', SEP_ENV]);
-  }
-  if (!(await trkPkgs())) {
-    trkSend({ stage: 'pip', text: 'Загрузка библиотек…' });
-    await spawnLines('uv', ['pip', 'install', '--python', SEP_PY, ...TORCH_IDX, 'sam2', 'opencv-contrib-python-headless'], (l) => {
-      const m = /(Downloading|Downloaded|Installed|Prepared|Built)\s+(.+)/.exec(l);
-      if (m) trkSend({ stage: 'pip', text: `${m[1] === 'Downloading' ? 'Загрузка' : 'Готово'}: ${m[2].trim().slice(0, 60)}` });
+
+// HTTPS-прокси, который только пересылает байты и считает их (CONNECT-туннель, содержимое не видит)
+function byteProxy(onBytes) {
+  const http = require('http'), net = require('net');
+  const srv = http.createServer((req, res) => { res.writeHead(501); res.end(); });
+  const socks = new Set();
+  srv.on('connect', (req, sock, head) => {
+    const m = /^\[?([^\]]+?)\]?:(\d+)$/.exec(req.url || '');
+    if (!m) return sock.destroy();
+    const up = net.connect(Number(m[2]), m[1]);
+    socks.add(up); socks.add(sock);
+    up.once('connect', () => {
+      sock.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head && head.length) up.write(head);
+      up.pipe(sock); sock.pipe(up);
     });
+    up.on('data', (b) => onBytes(b.length));
+    const end = () => { up.destroy(); sock.destroy(); socks.delete(up); socks.delete(sock); };
+    up.on('error', end); sock.on('error', end); up.on('close', end); sock.on('close', end);
+  });
+  return new Promise((resolve, reject) => {
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => resolve({ url: 'http://127.0.0.1:' + srv.address().port, close: () => { for (const s of socks) s.destroy(); srv.close(); } }));
+  });
+}
+const uvSize = (s) => { const m = /([\d.]+)\s*([KMG]?)i?B/.exec(s); return m ? Number(m[1]) * { '': 1, K: 1024, M: 1048576, G: 1073741824 }[m[2]] : 0; };
+
+let inst = null, instChain = Promise.resolve();
+const instSend = (msg) => { if (win) win.webContents.send('ai:install', msg); };
+async function aiInstall(parts) {
+  const st = inst = { canceled: false, ac: new AbortController() };
+  const halt = () => { if (st.canceled) { const e = new Error('Отменено'); e.canceled = true; throw e; } };
+  fs.mkdirSync(SEP_MODELS, { recursive: true });
+  // что именно нужно: пакеты ставим одним списком (одно разрешение зависимостей), модели — по одной
+  const env0 = fs.existsSync(SEP_PY), pkgs = [], models = [];
+  for (const k of parts) {
+    const P = AI_PARTS[k];
+    if (!env0 || !(await pyHas(P.mods))) pkgs.push(...P.pkgs);
+    for (const m of P.models) if (!modelHas(m)) models.push(m);
   }
-  const dst = path.join(SEP_MODELS, TRK_CKPT);
-  if (!fs.existsSync(dst)) {
-    trkSend({ stage: 'model', text: 'Загрузка модели…' });
-    const r = await fetch(TRK_URL);
-    if (!r.ok) throw new Error('Не удалось скачать модель: HTTP ' + r.status);
-    const total = Number(r.headers.get('content-length')) || 0, tmp = dst + '.part';
-    const out = fs.createWriteStream(tmp);
-    let got = 0, last = 0;
-    for await (const chunk of r.body) {
-      out.write(chunk); got += chunk.length;
-      if (Date.now() - last > 300) { last = Date.now(); trkSend({ stage: 'model', text: `Загрузка модели… ${total ? Math.round(got / total * 100) + '% (' : ''}${(got / 1048576).toFixed(0)} МБ${total ? ' из ' + (total / 1048576).toFixed(0) + ' МБ)' : ''}` }); }
+  // pr: done — байты законченных шагов, cur/curTotal — текущий шаг, rest — ещё не начатые модели
+  const pr = { stage: '', text: '', done: 0, cur: 0, curTotal: 0, rest: models.reduce((s, m) => s + m.size, 0), raw: 0, known: !pkgs.length };
+  const own = ['HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy'].some(k => process.env[k]);   // свой прокси пользователя не трогаем
+  const proxy = own ? null : await byteProxy((n) => { pr.raw += n; pr.cur += n; }).catch(() => null);
+  const penv = proxy ? { HTTPS_PROXY: proxy.url, https_proxy: proxy.url } : {};
+  const hist = [];
+  const send = () => {
+    const now = Date.now();
+    hist.push([now, pr.raw]);
+    while (hist.length > 2 && now - hist[0][0] > 6000) hist.shift();
+    const dt = (now - hist[0][0]) / 1000, speed = dt > 0.5 ? (pr.raw - hist[0][1]) / dt : 0;
+    const total = pr.done + pr.curTotal + pr.rest;
+    instSend({ stage: pr.stage, text: pr.text, known: pr.known && total > 0, got: pr.done + Math.min(pr.cur, pr.curTotal), total, speed });
+  };
+  const timer = setInterval(send, 400);
+  const step = (stage, text, size) => { pr.stage = stage; pr.text = text; pr.cur = 0; pr.curTotal = size; send(); };
+  const finish = () => { pr.done += pr.curTotal; pr.cur = 0; pr.curTotal = 0; };
+  try {
+    if (!env0) {
+      step('env', 'Подготовка Python…', 0);
+      await spawnLines('uv', ['venv', '--python', '3.12', SEP_ENV], null, penv);
+      halt();
     }
-    await new Promise((res, rej) => out.end((e) => e ? rej(e) : res()));
-    fs.renameSync(tmp, dst);
+    if (pkgs.length) {
+      step('pip', 'Загрузка библиотек (PyTorch, CUDA)…', 0);
+      const sizes = {};
+      let got = 0;   // без прокси — считаем по завершённым пакетам
+      await spawnLines('uv', ['pip', 'install', '--python', SEP_PY, '--torch-backend', 'auto', ...pkgs], (l) => {
+        let m;
+        if ((m = /^\s*Downloading\s+(\S+)\s+\((.+)\)/.exec(l))) { sizes[m[1]] = uvSize(m[2]); pr.curTotal += sizes[m[1]]; pr.known = true; }
+        else if ((m = /^\s*Downloaded\s+(\S+)/.exec(l))) {
+          got += sizes[m[1]] || 0;
+          if (!proxy) pr.cur = got;
+          if (got >= pr.curTotal) pr.text = 'Установка библиотек…';
+        } else if (/^\s*Prepared\s/.test(l)) pr.text = 'Установка библиотек…';
+      }, penv);
+      pr.known = true;
+      finish(); halt();
+    }
+    for (const m of models) {
+      pr.rest -= m.size;
+      step('model', `Загрузка модели ${m.name}…`, m.size);
+      if (m.url) {
+        // SAM 2 — просто файл: качаем сами
+        const dst = path.join(SEP_MODELS, m.file), tmp = dst + '.part';
+        const r = await fetch(m.url, { signal: st.ac.signal });
+        if (!r.ok) throw new Error('Не удалось скачать модель: HTTP ' + r.status);
+        pr.curTotal = Number(r.headers.get('content-length')) || m.size;
+        const out = fs.createWriteStream(tmp);
+        try {
+          for await (const chunk of r.body) {
+            if (!out.write(chunk)) await new Promise(res => out.once('drain', res));
+            pr.cur += chunk.length; pr.raw += chunk.length;
+          }
+          await new Promise((res, rej) => out.end((e) => e ? rej(e) : res()));
+        } catch (e) { out.destroy(); fs.rmSync(tmp, { force: true }); throw st.canceled ? Object.assign(new Error('Отменено'), { canceled: true }) : e; }
+        fs.renameSync(tmp, dst);
+      } else {
+        // BS-Roformer качает сам audio-separator (модель + её настройки) — байты видит прокси
+        await spawnLines(SEP_PY, [SEP_SCRIPT, '-', SEP_MODELS, '--models', SEP_MODELS, '--model', m.file, '--download-only'], (l) => {
+          const t = /(\d{1,3})%\|.*?([\d.]+[kMG]?)\/([\d.]+[kMG])/.exec(l);
+          if (t && !proxy) pr.cur = Number(t[1]) / 100 * m.size;
+        }, penv);
+      }
+      finish(); halt();
+    }
+    pr.text = 'Готово'; send();
+    return true;
+  } catch (e) {
+    if (st.canceled) { const er = new Error('Отменено'); er.canceled = true; throw er; }
+    throw e;
+  } finally {
+    clearInterval(timer);
+    if (proxy) proxy.close();
+    inst = null;
   }
-  return true;
-})));
+}
+// parts — ['voice', 'track'] (что нужно поставить); по одной установке за раз
+ipcMain.handle('ai:install', (e, parts) => (instChain = instChain.catch(() => { }).then(() => aiInstall((parts || Object.keys(AI_PARTS)).filter(k => AI_PARTS[k])))));
+ipcMain.handle('ai:installCancel', () => {
+  if (!inst) return;
+  inst.canceled = true;
+  inst.ac.abort();
+  if (sepProc) sepProc.kill('SIGTERM');
+});
+app.on('will-quit', () => { if (inst) { inst.canceled = true; inst.ac.abort(); if (sepProc) sepProc.kill('SIGTERM'); } });
 // job = { name, path, a, b, t0, box: [x, y, w, h], engine, fps }
 async function trkRemote(job) {
   const cut = path.join(os.tmpdir(), `lincut-trk-${process.pid}-${job.name}.mp4`), ref = aiRefs.trk = {};

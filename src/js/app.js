@@ -16,6 +16,8 @@ const App = {
     Roto.init();
     Links.init();
     AiServer.init();
+    AiModels.init();
+    Tasks.init();
     this.bindWindow();
     Home.init();
     Player.init();
@@ -272,7 +274,8 @@ const App = {
         { label: 'Горячие клавиши', icon: 'keyboard', onClick: () => this.shortcuts() },
         ...KEYMAPS.map(k => ({ label: 'Раскладка: ' + k.name, checked: Edit.keymap === k.id, onClick: () => Edit.setKeymap(k.id) })),
         '-',
-        { label: 'О программе', icon: 'info', onClick: () => modal({ title: 'LinCut', width: 380, body: '<p>Видеоредактор для Linux.</p><p class="muted">Electron + FFmpeg. Эффекты и ключевые кадры рендерятся одинаково в превью и при экспорте.</p>', buttons: [{ label: 'OK', primary: true }] }) },
+        { label: 'Проверить обновления…', icon: 'download', onClick: () => Tasks.dialog() },
+        { label: 'О программе', icon: 'info', onClick: () => modal({ title: 'LinCut', width: 380, body: `<p>Видеоредактор для Linux и Windows.</p><p class="muted">Версия ${esc((Tasks.upd && Tasks.upd.current) || '')}. Electron + FFmpeg. Эффекты и ключевые кадры рендерятся одинаково в превью и при экспорте.</p>`, buttons: [{ label: 'OK', primary: true }] }) },
       ],
     };
   },

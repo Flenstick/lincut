@@ -5,6 +5,9 @@ let progressCb = null;
 ipcRenderer.on('export:progress', (e, v) => progressCb && progressCb(v));
 const urlCbs = new Set();
 ipcRenderer.on('url:progress', (e, v) => urlCbs.forEach(cb => cb(v)));
+const aiInstCbs = new Set(), updCbs = new Set();
+ipcRenderer.on('ai:install', (e, v) => aiInstCbs.forEach(cb => cb(v)));
+ipcRenderer.on('upd:state', (e, v) => updCbs.forEach(cb => cb(v)));
 const sepCbs = new Set(), stabCbs = new Set(), trkCbs = new Set(), rotoCbs = new Set();
 ipcRenderer.on('roto:progress', (e, v) => rotoCbs.forEach(cb => cb(v)));
 ipcRenderer.on('trk:progress', (e, v) => trkCbs.forEach(cb => cb(v)));
@@ -60,14 +63,12 @@ contextBridge.exposeInMainWorld('api', {
   writeProjectFile: (id, name, data) => ipcRenderer.invoke('project:writeFile', id, name, data),
 
   sepStatus: () => ipcRenderer.invoke('sep:status'),
-  sepInstall: () => ipcRenderer.invoke('sep:install'),
   sepRun: (job) => ipcRenderer.invoke('sep:run', job),
   sepCancel: () => ipcRenderer.invoke('sep:cancel'),
   onSepProgress: (cb) => { sepCbs.add(cb); return () => sepCbs.delete(cb); },
   vfxRender: (job) => ipcRenderer.invoke('vfx:render', job),
   stabRun: (job) => ipcRenderer.invoke('stab:run', job),
   trkStatus: () => ipcRenderer.invoke('trk:status'),
-  trkInstall: () => ipcRenderer.invoke('trk:install'),
   trkRun: (job) => ipcRenderer.invoke('trk:run', job),
   trkCancel: () => ipcRenderer.invoke('trk:cancel'),
   clipRead: () => ipcRenderer.invoke('clip:read'),
@@ -78,6 +79,14 @@ contextBridge.exposeInMainWorld('api', {
   urlCancel: (name) => ipcRenderer.invoke('url:cancel', name),
   onUrlProgress: (cb) => { urlCbs.add(cb); return () => urlCbs.delete(cb); },
   aiConfig: (c) => ipcRenderer.invoke('ai:config', c),
+  aiStatus: () => ipcRenderer.invoke('ai:status'),
+  aiInstall: (parts) => ipcRenderer.invoke('ai:install', parts),
+  aiInstallCancel: () => ipcRenderer.invoke('ai:installCancel'),
+  onAiInstall: (cb) => { aiInstCbs.add(cb); return () => aiInstCbs.delete(cb); },
+  updState: () => ipcRenderer.invoke('upd:state'),
+  updCheck: () => ipcRenderer.invoke('upd:check'),
+  updInstall: () => ipcRenderer.invoke('upd:install'),
+  onUpdState: (cb) => { updCbs.add(cb); return () => updCbs.delete(cb); },
   aiTest: (c) => ipcRenderer.invoke('ai:test', c),
   rotoMask: (job) => ipcRenderer.invoke('roto:mask', job),
   rotoStop: () => ipcRenderer.invoke('roto:stop'),

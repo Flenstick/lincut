@@ -12,7 +12,6 @@ const VoiceSep = {
 
   init() {
     window.api.onSepProgress((m) => {
-      if (m.stage && this.installProgress) this.installProgress(m);
       const j = m.name && this.jobs[m.name];
       if (j) { j.p = m.p; j.pos = m.stage === 'queue' ? m.pos : 0; this.redraw(); }
     });
@@ -94,38 +93,7 @@ const VoiceSep = {
   cancelAll() { if (Object.keys(this.jobs).length) window.api.sepCancel(); },
 
   installDialog() {
-    return new Promise((resolve) => {
-      let done = false, busy = false;
-      const body = h(`<div class="sep-install">
-        <p>Чтобы убрать голос или фон, нужна нейросеть <b>BS-Roformer</b> — как в CapCut. Она ставится один раз
-        в <code>${IS_WIN ? "%LOCALAPPDATA%\\LinCut" : "~/.local/share/lincut"}</code> (≈ 7 ГБ на диске, скачивается ≈ 3,5 ГБ), в систему ничего не устанавливается.</p>
-        <p class="muted">Работает на видеокарте NVIDIA; без неё — на процессоре, заметно медленнее.</p>
-        <div class="sep-progress hidden"><div class="exp-bar indet"><i></i></div><div class="sep-line muted small"></div></div>
-      </div>`);
-      const dlg = modal({ title: 'Нейросеть для голоса', body, width: 480, onClose: () => { if (busy) window.api.sepCancel(); this.installProgress = null; resolve(done); }, buttons: [
-        { label: 'Отмена' },
-        { label: 'Установить', primary: true, keep: true, onClick: async (close, root) => {
-          if (busy) return false;
-          busy = true;
-          const btn = $('.modal-foot .primary-btn', root);
-          btn.disabled = true; btn.textContent = 'Установка…';
-          $('.sep-progress', body).classList.remove('hidden');
-          this.installProgress = (m) => { $('.sep-line', body).textContent = m.text; };
-          try {
-            await window.api.sepInstall();
-            this.ready = true; done = true; busy = false;
-            toast('Нейросеть установлена', 'ok');
-            close(true);
-          } catch (e) {
-            busy = false;
-            btn.disabled = false; btn.textContent = 'Повторить';
-            $('.exp-bar', body).classList.remove('indet');
-            $('.sep-line', body).textContent = 'Ошибка: ' + String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-          }
-          return false;
-        } },
-      ] });
-      void dlg;
-    });
+    return AiModels.installDialog('voice', 'Нейросеть для голоса', `Чтобы убрать голос или фон, нужна нейросеть <b>BS-Roformer</b> — как в CapCut. Она загружается один раз,
+      в систему ничего не устанавливается. Работает на видеокарте NVIDIA; без неё — на процессоре, заметно медленнее.`).then((ok) => { if (ok) this.ready = true; return ok; });
   },
 };
