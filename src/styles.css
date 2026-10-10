@@ -1191,7 +1191,7 @@ body.dragging .splitter-v:hover::after, body.dragging .splitter-h:hover::after {
 .pl-form .text-input { color: var(--text); font-size: 12.5px; }
 .pl-settings { display: flex; flex-direction: column; gap: 4px; }
 .pl-settings .pl-hint { margin: 0 0 6px; }
-.lp-tabs button.lp-plug { flex: 0 0 34px; }
+.lp-tabs button.lp-plug { flex: 0 0 28px; padding: 0; }
 [data-theme="capcut"] .pl-settings .prop-row > label:first-child { width: 150px; flex: none; }
 .pl-settings .prop-row { min-height: 32px; }
 .pl-settings .prop-row .text-input, .pl-settings .prop-row select { flex: 1; min-width: 0; color: var(--text); }
