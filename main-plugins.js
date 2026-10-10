@@ -266,4 +266,4 @@ function setup(getWin) {
   app.on('will-quit', () => { for (const p of ffProcs.values()) try { p.kill('SIGTERM'); } catch { } setWatch(false); });
 }
 
-module.exports = { setup, PLUGINS_DIR };
+module.exports = { setup, PLUGINS_DIR, scan, install, checkManifest };

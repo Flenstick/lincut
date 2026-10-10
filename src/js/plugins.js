@@ -163,6 +163,7 @@ const Plugins = {
   extendMenus(m) {
     const own = this.commands.filter(c => c.menu === 'plugins');
     m.plugins = [
+      { label: 'Магазин плагинов…', icon: 'storefront', onClick: () => Shop.open() },
       { label: 'Управление плагинами…', icon: 'puzzle', onClick: () => this.manager() },
       { label: 'Перезагрузить плагины', icon: 'reset', key: 'Ctrl+Shift+R', onClick: () => this.reload() },
       '-',
@@ -568,6 +569,7 @@ const Plugins = {
     const list = r.plugins.map(p => ({ ...p, ...(loaded[p.id] && loaded[p.id].dir === p.dir ? { loaded: loaded[p.id].loaded, error: p.error || loaded[p.id].error, errors: loaded[p.id].errors, api: loaded[p.id].api, manifest: p.manifest } : {}) }));
     const body = h(`<div class="pl-wrap">
       <div class="pl-tools">
+        <button class="primary-btn" data-a="shop">${icon('storefront')}Магазин</button>
         <button class="secondary-btn" data-a="install">${icon('download')}Установить…</button>
         <button class="secondary-btn" data-a="create">${icon('code')}Создать…</button>
         <button class="secondary-btn" data-a="folder">${icon('folder')}Папка</button>
@@ -640,6 +642,7 @@ const Plugins = {
       if (a === 'folder') window.api.openPath(r.dir);
       if (a === 'docs') window.api.plugins.openExternal(r.docs);
       if (a === 'reload') this.reload();
+      if (a === 'shop') { dlg.close(); Shop.open(); }
       if (a === 'install') { dlg.close(); this.installDialog(); }
       if (a === 'create') { dlg.close(); this.createDialog(); }
     });

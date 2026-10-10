@@ -114,6 +114,17 @@ contextBridge.exposeInMainWorld('api', {
     onChanged: (cb) => { plugCbs.add(cb); return () => plugCbs.delete(cb); },
     onFfProgress: (cb) => { ffCbs.add(cb); return () => ffCbs.delete(cb); },
   },
+  // магазин плагинов (main-shop.js)
+  shop: {
+    account: () => ipcRenderer.invoke('shop:account'),
+    call: (action, o) => ipcRenderer.invoke('shop:call', action, o),
+    register: (nick) => ipcRenderer.invoke('shop:register', nick),
+    login: (key) => ipcRenderer.invoke('shop:login', key),
+    logout: () => ipcRenderer.invoke('shop:logout'),
+    key: () => ipcRenderer.invoke('shop:key'),
+    install: (id, sha256) => ipcRenderer.invoke('shop:install', id, sha256),
+    publish: (id) => ipcRenderer.invoke('shop:publish', id),
+  },
 
   debugShot: (f) => ipcRenderer.invoke('debug:shot', f),
   fileUrl: (p) => pathToFileURL(p).href,

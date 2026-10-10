@@ -19,6 +19,8 @@ app.commandLine.appendSwitch('enable-smooth-scrolling');
 // плагины: протокол lincut-plugin:// нужно объявить до готовности приложения
 const Plugins = require('./main-plugins');
 Plugins.setup(() => win);
+const Shop = require('./main-shop');
+Shop.setup(() => win);
 
 // Windows: ffmpeg, ffprobe, yt-dlp и uv лежат рядом с программой (resources/bin) — добавляем в PATH,
 // тогда spawn('ffmpeg') и скрипты нейросетей находят их так же, как системные на Linux
