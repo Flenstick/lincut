@@ -1,7 +1,7 @@
 {
   "name": "lincut",
   "productName": "LinCut",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Видеоредактор для Linux и Windows в стиле CapCut",
   "main": "main.js",
   "license": "MIT",
@@ -19,11 +19,13 @@
     "asar": false,
     "files": [
       "main.js",
+      "main-plugins.js",
       "preload.js",
       "package.json",
       "src/**/*",
       "assets/**/*",
-      "tools/*.py"
+      "tools/*.py",
+      "examples/**/*"
     ],
     "extraResources": [
       {

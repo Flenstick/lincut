@@ -3,6 +3,7 @@ const bus = {
   h: {},
   on(ev, fn) { (this.h[ev] = this.h[ev] || []).push(fn); },
   emit(ev, ...a) { (this.h[ev] || []).forEach(fn => fn(...a)); },
+  off(ev, fn) { if (this.h[ev]) this.h[ev] = this.h[ev].filter(f => f !== fn); },
 };
 
 const RATIOS = [

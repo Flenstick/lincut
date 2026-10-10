@@ -41,7 +41,8 @@ const Panels = {
       filters: [['all', 'Все фильтры']],
       transitions: [['base', 'Базовые'], ['move', 'Движение'], ['edit', 'Эдит']],
       effects: FX_CATS.map(c => [c.id, c.name]),
-    }[this.tab];
+    }[this.tab] || Plugins.panelNavs(this.tab);
+    if (!navs) { this.tab = 'media'; return this.render(); }
     let sub = this.sub[this.tab] || navs[0][0];
     nav.innerHTML = navs.map(([id, l]) => `<button class="${id === sub ? 'active' : ''}" data-s="${id}">${l}</button>`).join('');
     nav.onclick = (e) => { const b = e.target.closest('button'); if (!b || b.classList.contains('active')) return; this.sub[this.tab] = b.dataset.s; this.render(); animIn(content); };
@@ -49,7 +50,8 @@ const Panels = {
     const same = content.dataset.view === this.tab + sub;
     content.innerHTML = '';
     content.dataset.view = this.tab + sub;
-    const fn = this[this.tab + '_' + sub];
+    // разделы эффектов из плагинов и панели плагинов
+    const fn = this[this.tab + '_' + sub] || (this.tab === 'effects' ? (r) => this.effectsCat(r, sub) : Plugins.panelFn(this.tab, sub));
     if (fn) fn.call(this, content);
     hydrateIcons(content);
     if (same) content.scrollTop = st;

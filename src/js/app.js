@@ -26,6 +26,7 @@ const App = {
     Scopes.init();
     Inspector.init();
     Panels.init();
+    Plugins.init();
     this.bindUI();
     this.bindKeys();
     this.updateTips();
@@ -35,7 +36,9 @@ const App = {
     bus.on('project', () => { if (store.p) $('#tcTotal').textContent = fmtTC(store.duration(), store.p.fps); });
     bus.on('time', () => { if (store.p) $('#tcCur').textContent = fmtTC(store.time, store.p.fps); });
     window.addEventListener('beforeunload', () => { if (store.dirty) this.save(); });
+    await Plugins.load();
     await Home.render();
+    await Plugins.afterStart();
     if (window.LINCUT_AUTOTEST) window.LINCUT_AUTOTEST();
   },
 
@@ -83,6 +86,7 @@ const App = {
     requestAnimationFrame(() => { Timeline.fit(); Inspector.render(); });
     this.setSaved('Сохранено');
     VoiceSep.checkReady(false).then(() => VoiceSep.autoEnsure());
+    bus.emit('open', store.p);
   },
   async goHome() {
     Player.pause();
@@ -90,6 +94,7 @@ const App = {
     VoiceSep.cancelAll();
     await this.save();
     Player.releaseAll();
+    bus.emit('close', store.p);
     store.p = null;
     $('#editor').classList.add('hidden');
     $('#home').classList.remove('hidden');
@@ -192,7 +197,7 @@ const App = {
   menus() {
     const s = store.selected(), c = s && s.clip, vis = c && c.transform;
     const inClip = c && store.time >= c.start && store.time < clipEnd(c);
-    return {
+    return Plugins.extendMenus({
       file: [
         { label: 'Новый проект', icon: 'plus', onClick: async () => { await this.save(); Player.releaseAll(); this.newProject(); } },
         { label: 'Импорт медиа…', icon: 'download', key: 'Ctrl+I', onClick: () => this.importDialog() },
@@ -276,9 +281,9 @@ const App = {
         ...KEYMAPS.map(k => ({ label: 'Раскладка: ' + k.name, checked: Edit.keymap === k.id, onClick: () => Edit.setKeymap(k.id) })),
         '-',
         { label: 'Проверить обновления…', icon: 'download', onClick: () => Tasks.dialog() },
-        { label: 'О программе', icon: 'info', onClick: () => modal({ title: 'LinCut', width: 380, body: `<p>Видеоредактор для Linux и Windows.</p><p class="muted">Версия ${esc((Tasks.upd && Tasks.upd.current) || '')}. Electron + FFmpeg. Эффекты и ключевые кадры рендерятся одинаково в превью и при экспорте.</p>`, buttons: [{ label: 'OK', primary: true }] }) },
+        { label: 'О программе', icon: 'info', onClick: () => modal({ title: 'LinCut', width: 380, body: `<p>Видеоредактор для Linux и Windows.</p><p class="muted">Версия ${esc(LinCut.version || (Tasks.upd && Tasks.upd.current) || '')}. Electron + FFmpeg. Эффекты и ключевые кадры рендерятся одинаково в превью и при экспорте.</p>`, buttons: [{ label: 'OK', primary: true }] }) },
       ],
-    };
+    });
   },
   bindMenubar() {
     const bar = $('#menubar');
@@ -328,6 +333,8 @@ const App = {
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' && !['range', 'checkbox'].includes(e.target.type) || tag === 'textarea' || tag === 'select') return;
       const ctrl = e.ctrlKey || e.metaKey, k = e.key.toLowerCase(), code = e.code;
+      if (Plugins.key(e)) { e.preventDefault(); return; }
+      if (ctrl && e.shiftKey && code === 'KeyR') { e.preventDefault(); Plugins.reload(); return; }
       if (Edit.key(e)) { e.preventDefault(); return; }
       let handled = true;
       if (code === 'Space') Player.toggle();
@@ -579,7 +586,11 @@ const App = {
       $('#dropHint').classList.add('hidden');
       if (!e.dataTransfer.files.length) return;
       e.preventDefault();
-      const paths = [...e.dataTransfer.files].map(f => window.api.pathForFile(f)).filter(Boolean);
+      let paths = [...e.dataTransfer.files].map(f => window.api.pathForFile(f)).filter(Boolean);
+      // .lcplugin — архив плагина: установить, а не импортировать
+      for (const f of paths.filter(x => /\.lcplugin$/i.test(x))) await Plugins.installPath(f);
+      paths = paths.filter(x => !/\.lcplugin$/i.test(x));
+      if (!paths.length) return;
       const added = await Media.importPaths(paths);
       if (added.length) { Panels.show('media'); toast(`Импортировано: ${added.length}`, 'ok'); }
     });

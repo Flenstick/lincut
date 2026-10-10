@@ -99,3 +99,7 @@ npm run dist:win            # dist/LinCut-Setup-*.exe и dist/LinCut-*-win-x64.z
 
 Код — MIT (см. `LICENSE`). Шрифты Inter, Golos Text, IBM Plex Mono — SIL OFL 1.1 (`src/fonts`),
 иконки — Phosphor Icons (MIT). В Windows-сборку входят ffmpeg/ffprobe (BtbN, GPL), yt-dlp (Unlicense) и uv (MIT/Apache-2.0).
+
+## Плагины
+
+LinCut можно расширять плагинами на JavaScript: свои эффекты, фильтры, переходы, голоса, панели, команды и горячие клавиши. Меню **Плагины** → «Создать плагин…» / «Установить плагин…». Документация — [docs/plugins.md](docs/plugins.md), примеры — [examples/plugins](examples/plugins).

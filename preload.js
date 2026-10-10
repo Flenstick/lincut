@@ -8,6 +8,9 @@ ipcRenderer.on('url:progress', (e, v) => urlCbs.forEach(cb => cb(v)));
 const aiInstCbs = new Set(), updCbs = new Set();
 ipcRenderer.on('ai:install', (e, v) => aiInstCbs.forEach(cb => cb(v)));
 ipcRenderer.on('upd:state', (e, v) => updCbs.forEach(cb => cb(v)));
+const plugCbs = new Set(), ffCbs = new Set();
+ipcRenderer.on('plugins:changed', (e, v) => plugCbs.forEach(cb => cb(v)));
+ipcRenderer.on('plugins:ffprogress', (e, v) => ffCbs.forEach(cb => cb(v)));
 const sepCbs = new Set(), stabCbs = new Set(), trkCbs = new Set(), rotoCbs = new Set();
 ipcRenderer.on('roto:progress', (e, v) => rotoCbs.forEach(cb => cb(v)));
 ipcRenderer.on('trk:progress', (e, v) => trkCbs.forEach(cb => cb(v)));
@@ -96,6 +99,21 @@ contextBridge.exposeInMainWorld('api', {
   onTrkProgress: (cb) => { trkCbs.add(cb); return () => trkCbs.delete(cb); },
   stabCancel: () => ipcRenderer.invoke('stab:cancel'),
   onStabProgress: (cb) => { stabCbs.add(cb); return () => stabCbs.delete(cb); },
+
+  plugins: {
+    list: () => ipcRenderer.invoke('plugins:list'),
+    setEnabled: (id, on) => ipcRenderer.invoke('plugins:setEnabled', id, on),
+    setDev: (on) => ipcRenderer.invoke('plugins:setDev', on),
+    pick: () => ipcRenderer.invoke('plugins:pick'),
+    pickFolder: () => ipcRenderer.invoke('plugins:pickFolder'),
+    install: (src) => ipcRenderer.invoke('plugins:install', src),
+    remove: (id) => ipcRenderer.invoke('plugins:remove', id),
+    create: (o) => ipcRenderer.invoke('plugins:create', o),
+    openExternal: (url) => ipcRenderer.invoke('plugins:openExternal', url),
+    ffmpeg: (prog, args, opts) => ipcRenderer.invoke('plugins:ffmpeg', prog, args, opts),
+    onChanged: (cb) => { plugCbs.add(cb); return () => plugCbs.delete(cb); },
+    onFfProgress: (cb) => { ffCbs.add(cb); return () => ffCbs.delete(cb); },
+  },
 
   debugShot: (f) => ipcRenderer.invoke('debug:shot', f),
   fileUrl: (p) => pathToFileURL(p).href,

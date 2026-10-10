@@ -1,0 +1,11 @@
+/* стили плагина подключаются из plugin.json ("style") — используйте токены LinCut: var(--panel-2), var(--accent)… */
+.chp-list { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; }
+.chp-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius-sm); background: var(--panel-2); }
+.chp-row:hover { background: var(--panel-3); }
+.chp-row.bad .chp-tc { color: var(--danger); }
+.chp-tc { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--accent); cursor: pointer; flex: none; min-width: 56px; }
+.chp-row input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--text); font: inherit; }
+.chp-row .icon-btn { opacity: 0; }
+.chp-row:hover .icon-btn { opacity: 1; }
+.chp-warn { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--text-2); margin-top: 6px; }
+.chp-warn span::before { content: "• "; color: var(--danger); }

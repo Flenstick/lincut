@@ -1,0 +1,15 @@
+{
+  "id": "chapters",
+  "name": "Главы для YouTube",
+  "version": "1.0.0",
+  "author": "LinCut",
+  "description": "Вкладка «Главы» слева: маркеры как главы, проверка правил YouTube и копирование таймкодов для описания.",
+  "main": "main.js",
+  "style": "style.css",
+  "lincut": ">=1.2.0",
+  "settings": [
+    { "key": "hours", "label": "Часы в таймкодах", "type": "select", "default": "auto", "options": [["auto", "Только если видео длиннее часа"], ["always", "Всегда"]] },
+    { "key": "name", "label": "Название новой главы", "type": "text", "default": "Глава" },
+    { "key": "minLen", "label": "Минимальная длина главы", "type": "number", "min": 5, "max": 60, "default": 10, "unit": "с", "hint": "YouTube требует главы не короче 10 секунд." }
+  ]
+}

@@ -40,6 +40,7 @@ const Inspector = {
     else if (c.kind === 'audio') tabs = [['audio', 'Аудио'], ['speed', 'Скорость']];
     else if (c.kind === 'image') tabs = [['video', 'Изображение'], ['anim', 'Анимация'], ['adjust', 'Цвет'], ['mask', 'Маска']];
     else tabs = [['video', 'Видео'], ...(m && m.hasAudio ? [['audio', 'Аудио']] : []), ['speed', 'Скорость'], ['anim', 'Анимация'], ['adjust', 'Цвет'], ['mask', 'Маска']];
+    tabs.push(...Plugins.inspectorTabs(c));
     let tab = this.tabs[c.kind];
     if (!tabs.find(t => t[0] === tab)) tab = tabs[0][0];
     const head = h(`<div class="insp-tabs">${tabs.map(([id, l]) => `<button data-t="${id}" class="${id === tab ? 'active' : ''}">${l}</button>`).join('')}</div>`);
@@ -48,7 +49,9 @@ const Inspector = {
     const dir = tabInk.update(head, 'insp');
     const body = h('<div class="insp-body"></div>');
     this.root.appendChild(body);
-    ({ video: () => this.videoTab(body, c), audio: () => this.audioTab(body, c), speed: () => this.speedTab(body, c, s.track), anim: () => this.animTab(body, c), adjust: () => this.adjustTab(body, c), mask: () => this.maskTab(body, c), text: () => this.textTab(body, c), effect: () => this.effectTab(body, c) })[tab]();
+    const own = ({ video: () => this.videoTab(body, c), audio: () => this.audioTab(body, c), speed: () => this.speedTab(body, c, s.track), anim: () => this.animTab(body, c), adjust: () => this.adjustTab(body, c), mask: () => this.maskTab(body, c), text: () => this.textTab(body, c), effect: () => this.effectTab(body, c) })[tab];
+    if (own) own(); else Plugins.renderInspectorTab(tab, body, c);
+    Plugins.inspectorSections(tab, body, c);
     hydrateIcons(body);
     if (this.clip === c) body.scrollTop = st;
     // плавная смена содержимого — только при смене клипа или вкладки, не при обновлениях
@@ -1245,6 +1248,7 @@ const Inspector = {
     s3.appendChild(fr);
     const s4 = this.section(body, 'Фон');
     s4.appendChild(this.colorRow('Цвет фона', p.bg, (v, done) => { p.bg = v; Player.requestRender(); if (done) store.commit('bg'); }));
+    Plugins.inspectorSections('project', body, null);
     const tip = h(`<div class="insp-tip">${icon('info')}<span>Выберите клип на таймлайне, чтобы настроить его: обрезка, громкость, скорость, фильтры и анимации.</span></div>`);
     body.appendChild(tip);
   },

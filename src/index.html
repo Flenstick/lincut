@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>LinCut</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; img-src 'self' file: data: blob:; media-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob: lincut-plugin:; img-src 'self' file: data: blob: lincut-plugin:; media-src 'self' file: data: blob: lincut-plugin:; style-src 'self' 'unsafe-inline' lincut-plugin:; font-src 'self' file: data: lincut-plugin:; script-src 'self' lincut-plugin:">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -27,6 +27,8 @@
         <div class="theme-list" id="themeList"></div>
         <div class="side-label">Нейросети</div>
         <button class="path-link" id="homeAi">Загрузка и настройка…</button>
+        <div class="side-label">Плагины</div>
+        <button class="path-link" id="homePlugins">Управление плагинами…</button>
         <div class="side-label">Папка проектов</div>
         <button class="path-link" id="projectsPath" title="Открыть папку"></button>
       </div>
@@ -70,6 +72,7 @@
         <button data-m="edit">Правка</button>
         <button data-m="clip">Клип</button>
         <button data-m="view">Вид</button>
+        <button data-m="plugins">Плагины</button>
         <button data-m="help">Справка</button>
       </nav>
     </div>
@@ -245,6 +248,7 @@
 <script src="js/links.js"></script>
 <script src="js/aiserver.js"></script>
 <script src="js/home.js"></script>
+<script src="js/plugins.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

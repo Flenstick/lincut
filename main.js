@@ -16,6 +16,9 @@ if (typeof app.setDesktopName === 'function') app.setDesktopName('lincut.desktop
 if (process.env.LINCUT_FAKE_MIC) app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 // плавная прокрутка колесом, как в нативных программах
 app.commandLine.appendSwitch('enable-smooth-scrolling');
+// плагины: протокол lincut-plugin:// нужно объявить до готовности приложения
+const Plugins = require('./main-plugins');
+Plugins.setup(() => win);
 
 // Windows: ffmpeg, ffprobe, yt-dlp и uv лежат рядом с программой (resources/bin) — добавляем в PATH,
 // тогда spawn('ffmpeg') и скрипты нейросетей находят их так же, как системные на Linux

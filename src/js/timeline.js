@@ -1278,6 +1278,7 @@ const Timeline = {
     items.push({ label: c.disabled ? 'Включить клип' : 'Отключить клип', icon: 'prohibit', key: 'Shift+E', onClick: () => Edit.toggleEnabled() });
     if (c.kind !== 'text' && c.kind !== 'image') items.push({ label: 'Скорость и длительность…', icon: 'speed', key: 'Ctrl+R', onClick: () => Edit.speedDialog() });
     items.push({ label: 'Отметить клип (вход/выход)', icon: 'brackets', key: 'X', onClick: () => Edit.markClip() });
+    Plugins.clipMenu(c, items);
     items.push('-', { label: 'Удалить', icon: 'trash', key: 'Del', danger: true, onClick: () => this.deleteSel() });
     items.push({ label: 'Удалить со сдвигом', icon: 'trash', key: 'Shift+Del', danger: true, onClick: () => Edit.rippleDelete() });
     showMenu(x, y, items);

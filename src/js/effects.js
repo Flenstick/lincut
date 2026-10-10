@@ -1060,5 +1060,7 @@ function transFxOps(type, D) {
     case 'rgbT': return [{ type: 'camera', z: `1+0.1*pow(${A},2)` }, { type: 'rgb', rh: `-45*pow(${A},2)`, bh: `45*pow(${A},2)` }];
     case 'whipLeft': case 'whipRight': return [{ type: 'blur', dir: 'h', s: `30*sin(PI*clip(T/${n4(D)},0,1))` }];
   }
+  // переходы из плагинов (plugins.js)
+  if (PLUGIN_TRANS[type]) return PLUGIN_TRANS[type](D);
   return null;
 }

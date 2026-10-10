@@ -688,6 +688,7 @@ const Exporter = {
       $('.exp-status', body).textContent = 'Экспорт… ' + (left != null ? 'осталось ≈ ' + fmtDur(left) : '');
     });
     let res;
+    bus.emit('export:start', { file: out, options: o });
     try {
       const { args, total } = await this.build(o, out, (t) => { $('.exp-status', body).textContent = t; });
       $('.exp-status', body).textContent = 'Экспорт…';
@@ -697,6 +698,7 @@ const Exporter = {
     }
     window.api.onExportProgress(() => { });
     dlg.close();
+    bus.emit('export:done', { ok: !!res.ok, canceled: !!(canceled || res.canceled), file: out });
     if (res.ok) {
       const took = (performance.now() - t0) / 1000;
       const done = h(`<div class="export-done">
