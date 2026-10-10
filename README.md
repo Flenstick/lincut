@@ -22,7 +22,17 @@
 
 ## Запуск
 
-**Linux:**
+**Arch Linux** (и Manjaro, EndeavourOS, CachyOS…) — установка и обновление одной командой:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Flenstick/lincut/main/packaging/arch/install.sh | sh
+```
+
+Скрипт скачивает пакет последнего релиза и ставит его через pacman — `electron43` и `ffmpeg` подтянутся сами.
+Потом — `lincut` или «LinCut» в меню приложений. Чтобы обновить, запустите ту же команду; удалить — `sudo pacman -R lincut`.
+PKGBUILD — в [`packaging/arch`](packaging/arch).
+
+**Linux из исходников:**
 
 ```bash
 lincut            # или ./lincut.sh, или «LinCut» в меню приложений
