@@ -106,8 +106,7 @@ const Track = {
     if (!c.follow) return;
     const tf = c.follow.ref.tf;
     c.keys = [];
-    Object.assign(c.transform, { x: tf.x, y: tf.y, scale: tf.scale, rotation: tf.rotation });
-    c.opacity = tf.opacity;
+    putTf(c, keyPick(tf));
     store.p.trk = (store.p.trk || []).filter(x => x.id !== c.follow.trk);
     delete c.follow;
     store.commit('track-off');
@@ -173,7 +172,7 @@ const Track = {
         const T = V.start + ltAt(V, p.s);
         if (T < c.start - 1e-6 || T > clipEnd(c) + 1e-6) continue;
         const P = this.project(V, T, p.cx, p.cy), k = f.size ? (p.sz * P.k) / Math.max(1e-6, S0) : 1;
-        keys.push({ s: srcTime(c, T), x: P.x - W / 2 + off.x * k, y: P.y - H / 2 + off.y * k, scale: tf.scale * k, rotation: tf.rotation, opacity: tf.opacity });
+        keys.push({ s: srcTime(c, T), x: P.x - W / 2 + off.x * k, y: P.y - H / 2 + off.y * k, scale: tf.scale * k, rotation: tf.rotation, opacity: tf.opacity, sx: tf.sx, sy: tf.sy, rx: tf.rx, ry: tf.ry });
       }
     } else {
       // видео двигается само: положение, при котором объект оказывается в точке Q
@@ -195,7 +194,7 @@ const Track = {
           if (bw >= W) x = clamp(x, -(bw - W) / 2, (bw - W) / 2);
           if (bh >= H) y = clamp(y, -(bh - H) / 2, (bh - H) / 2);
         }
-        keys.push({ s: p.s, x, y, scale: Z, rotation: tf.rotation, opacity: tf.opacity });
+        keys.push({ s: p.s, x, y, scale: Z, rotation: tf.rotation, opacity: tf.opacity, sx: tf.sx, sy: tf.sy, rx: tf.rx, ry: tf.ry });
       }
     }
     c.keys = this.simplify(keys);

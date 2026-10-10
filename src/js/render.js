@@ -238,11 +238,17 @@ function mediaSize(c) {
 }
 
 // ---------------------------------------------------------------- ключевые кадры
-// c.keys = [{ s: время в источнике, x, y, scale, rotation, opacity }] — по возрастанию s
-const KEY_PROPS = ['x', 'y', 'scale', 'rotation', 'opacity'];
-function baseTf(c) { const t = c.transform; return { x: t.x, y: t.y, scale: t.scale, rotation: t.rotation, opacity: c.opacity ?? 1 }; }
+// c.keys = [{ s: время в источнике, x, y, scale, rotation, opacity, sx, sy, rx, ry }] — по возрастанию s
+// sx/sy — растяжение по ширине/высоте (множители к scale), rx/ry — 3D-поворот вокруг осей X и Y (градусы)
+const KEY_PROPS = ['x', 'y', 'scale', 'rotation', 'opacity', 'sx', 'sy', 'rx', 'ry'];
+function baseTf(c) { const t = c.transform; return { x: t.x, y: t.y, scale: t.scale, rotation: t.rotation, opacity: c.opacity ?? 1, sx: t.sx ?? 1, sy: t.sy ?? 1, rx: t.rx || 0, ry: t.ry || 0 }; }
 function srcTime(c, t) { return srcAt(c, t - c.start); }
-function keyPick(k) { return { x: k.x, y: k.y, scale: k.scale, rotation: k.rotation, opacity: k.opacity }; }
+function keyPick(k) { return { x: k.x, y: k.y, scale: k.scale, rotation: k.rotation, opacity: k.opacity, sx: k.sx ?? 1, sy: k.sy ?? 1, rx: k.rx || 0, ry: k.ry || 0 }; }
+// записать трансформацию (без прозрачности) в c.transform и прозрачность в c.opacity
+function putTf(c, v) {
+  Object.assign(c.transform, { x: v.x, y: v.y, scale: v.scale, rotation: v.rotation, sx: v.sx, sy: v.sy, rx: v.rx, ry: v.ry });
+  c.opacity = v.opacity;
+}
 // Трансформация клипа в момент t (время таймлайна)
 function tfAt(c, t) {
   const K = c.keys;
@@ -255,7 +261,7 @@ function tfAt(c, t) {
   if (s >= last.s) return keyPick(last);
   let i = 0;
   while (i < K.length - 2 && K[i + 1].s <= s) i++;
-  const a = K[i], b = K[i + 1], f = (s - a.s) / (b.s - a.s);
+  const a = keyPick(K[i]), b = keyPick(K[i + 1]), f = (s - K[i].s) / (K[i + 1].s - K[i].s);
   const o = {};
   for (const p of KEY_PROPS) o[p] = a[p] + (b[p] - a[p]) * f;
   return o;
@@ -285,7 +291,7 @@ function toggleKey(c, t) {
   if (i >= 0) {
     const cur = keyPick(c.keys[i]);
     c.keys.splice(i, 1);
-    if (!c.keys.length) { Object.assign(c.transform, { x: cur.x, y: cur.y, scale: cur.scale, rotation: cur.rotation }); c.opacity = cur.opacity; }
+    if (!c.keys.length) putTf(c, cur);
     return false;
   }
   c.keys.push({ s: srcTime(c, t), ...tfAt(c, t) });
@@ -295,16 +301,129 @@ function toggleKey(c, t) {
 // Сдвиг ключей при нормализации клипов без источника (фото, текст)
 function shiftKeys(c, d) { if (c.keys) for (const k of c.keys) k.s += d; }
 
-// Коробка клипа в координатах проекта (без анимации); t — время для ключевых кадров
+// Коробка клипа в координатах проекта (без анимации); t — время для ключевых кадров.
+// w/h — уже с растяжением sx/sy; rx/ry — 3D-поворот (см. proj3)
 function clipBox(c, W, H, time) {
   const t = tfAt(c, time);
   if (c.kind === 'text') {
     const tm = measureText(c);
-    return { cx: W / 2 + t.x, cy: H / 2 + t.y, w: tm.w * t.scale, h: tm.h * t.scale, rot: t.rotation };
+    return { cx: W / 2 + t.x, cy: H / 2 + t.y, w: tm.w * t.scale * t.sx, h: tm.h * t.scale * t.sy, rot: t.rotation, rx: t.rx, ry: t.ry, op: t.opacity };
   }
   const s = mediaSize(c);
   const f = Math.min(W / s.w, H / s.h) * t.scale;
-  return { cx: W / 2 + t.x, cy: H / 2 + t.y, w: s.w * f, h: s.h * f, rot: t.rotation, op: t.opacity };
+  return { cx: W / 2 + t.x, cy: H / 2 + t.y, w: s.w * f * t.sx, h: s.h * f * t.sy, rot: t.rotation, rx: t.rx, ry: t.ry, op: t.opacity };
+}
+
+// ---------------------------------------------------------------- 3D-поворот (как в Paint 3D)
+// Плоский объект (после масштаба и поворота в плоскости) поворачивается вокруг своей оси X (rx: верх уходит вглубь),
+// затем Y (ry: правый край уходит вглубь) и смотрится камерой на расстоянии D от плоскости кадра.
+// Та же формула — в превью (warp3d, WebGL) и в экспорте (perspective, exporter.js keyedLayer).
+const PERSP_K = 1.2;
+function is3d(t) { return !!t && (Math.abs(t.rx || 0) > 0.01 || Math.abs(t.ry || 0) > 0.01); }
+// расстояние камеры: от размера кадра, но не ближе 1,5 полудиагонали объекта (иначе края уходят за камеру)
+function perspDist(b, W, H) { return Math.max(PERSP_K * Math.hypot(W, H), 0.75 * Math.hypot(b.w, b.h)); }
+// точка (u, v) плоскости объекта (от центра, уже с поворотом Z) → [x, y] от центра на экране и w = (D + z) / D
+function proj3(rx, ry, D) {
+  const ax = rx * Math.PI / 180, ay = ry * Math.PI / 180;
+  const cX = Math.cos(ax), sX = Math.sin(ax), cY = Math.cos(ay), sY = Math.sin(ay);
+  return (u, v) => {
+    const y = v * cX, z1 = -v * sX;
+    const x = u * cY - z1 * sY, z = u * sY + z1 * cY;
+    const w = (D + z) / D;
+    return [x / w, y / w, w];
+  };
+}
+// точка (u, v) в осях объекта (до поворота Z) → координаты проекта
+function boxPoint(b, u, v, W, H) {
+  const r = b.rot * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const x = u * cs - v * sn, y = u * sn + v * cs;
+  if (!is3d(b)) return [b.cx + x, b.cy + y];
+  const P = proj3(b.rx, b.ry, perspDist(b, W, H))(x, y);
+  return [b.cx + P[0], b.cy + P[1]];
+}
+
+// Превью 3D-поворота: объект рисуется плоским на отдельный холст (flat(ctx, клип без 3D, анимация)),
+// затем этот холст кладётся на кадр четырёхугольником с перспективой (WebGL — точная перспективная
+// интерполяция, как у perspective в ffmpeg). Прозрачность и режим наложения — при выводе на кадр.
+const Warp3d = {
+  gl: null, cv: null, prog: null, buf: null, tex: null, failed: false,
+  init() {
+    if (this.gl || this.failed) return !!this.gl;
+    const cv = document.createElement('canvas');
+    const gl = cv.getContext('webgl', { premultipliedAlpha: true, alpha: true, antialias: true, preserveDrawingBuffer: true });
+    if (!gl) { this.failed = true; return false; }
+    const sh = (type, src) => { const o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o); return o; };
+    const pr = gl.createProgram();
+    gl.attachShader(pr, sh(gl.VERTEX_SHADER, 'attribute vec4 p;attribute vec2 uv;varying vec2 v;void main(){v=uv;gl_Position=p;}'));
+    gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, 'precision highp float;varying vec2 v;uniform sampler2D t;void main(){gl_FragColor=texture2D(t,v);}'));
+    gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) { this.failed = true; return false; }
+    this.cv = cv; this.gl = gl; this.prog = pr;
+    this.buf = gl.createBuffer();
+    this.tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    return true;
+  },
+  // src — холст объекта; quad — 4 угла [x, y, w] в пикселях целевого холста (лв, пв, пн, лн)
+  draw(ctx, src, quad, alpha, comp) {
+    const gl = this.gl, cv = this.cv, W = ctx.canvas.width, H = ctx.canvas.height;
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    gl.viewport(0, 0, W, H);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.prog);
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    const uv = [[0, 0], [1, 0], [1, 1], [0, 1]], d = [];
+    // w в четвёртой координате — видеокарта сама делит и интерполирует текстуру с перспективой
+    for (const i of [0, 1, 2, 0, 2, 3]) {
+      const [x, y, w] = quad[i];
+      d.push((x / W * 2 - 1) * w, (1 - y / H * 2) * w, 0, w, uv[i][0], uv[i][1]);
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(d), gl.STREAM_DRAW);
+    const ap = gl.getAttribLocation(this.prog, 'p'), au = gl.getAttribLocation(this.prog, 'uv');
+    gl.enableVertexAttribArray(ap); gl.vertexAttribPointer(ap, 4, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(au); gl.vertexAttribPointer(au, 2, gl.FLOAT, false, 24, 16);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = 'none';
+    ctx.globalAlpha = clamp(alpha, 0, 1);
+    ctx.globalCompositeOperation = comp || 'source-over';
+    ctx.drawImage(cv, 0, 0);
+    ctx.restore();
+  },
+};
+let flat3dCv = null;
+function draw3d(ctx, c, W, H, k, anim, time, flat) {
+  const t = tfAt(c, time), b = clipBox(c, W, H, time);
+  const a = anim || { alpha: 1, dx: 0, dy: 0 };
+  const flatClip = (x, y) => ({ ...c, keys: null, blend: undefined, opacity: 1, _fxPre: c.kind !== 'text' ? fxPreScale(c) : null,
+    transform: { ...c.transform, x, y, scale: t.scale, sx: t.sx, sy: t.sy, rotation: 0, rx: 0, ry: 0 } });
+  if (!Warp3d.init()) { flat(ctx, flatClip(t.x, t.y), a); return; }
+  // плоский объект — на холст по своему размеру с запасом (тень и обводка текста)
+  const pad = Math.ceil(Math.max(b.w, b.h) * k * 0.08 + 6);
+  const LW = Math.min(8192, Math.ceil(b.w * k + pad * 2)), LH = Math.min(8192, Math.ceil(b.h * k + pad * 2));
+  if (!flat3dCv) flat3dCv = document.createElement('canvas');
+  const F = flat3dCv;
+  if (F.width !== LW || F.height !== LH) { F.width = LW; F.height = LH; }
+  const fx = F.getContext('2d');
+  fx.setTransform(1, 0, 0, 1, 0, 0); fx.globalAlpha = 1; fx.globalCompositeOperation = 'source-over'; fx.filter = 'none';
+  fx.clearRect(0, 0, LW, LH);
+  flat(fx, flatClip(LW / (2 * k) - W / 2, LH / (2 * k) - H / 2), { alpha: 1, dx: 0, dy: 0 });
+  // углы холста объекта → 3D → экран (с учётом текущей матрицы ctx)
+  const P = proj3(b.rx, b.ry, perspDist(b, W, H));
+  const r = b.rot * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const U = LW / (2 * k), V = LH / (2 * k), M = ctx.getTransform();
+  const cx = b.cx + a.dx, cy = b.cy + a.dy;
+  const quad = [[-U, -V], [U, -V], [U, V], [-U, V]].map(([u, v]) => {
+    const [x, y, w] = P(u * cs - v * sn, u * sn + v * cs);
+    const X = (cx + x) * k, Y = (cy + y) * k;
+    return [M.a * X + M.c * Y + M.e, M.b * X + M.d * Y + M.f, w];
+  });
+  const bl = blendOf(c);
+  Warp3d.draw(ctx, F, quad, ctx.globalAlpha * b.op * a.alpha, bl ? bl.css : null);
 }
 
 const TRANSITIONS = [
@@ -579,6 +698,7 @@ let textLayer = null;
 function drawText(ctx, c, W, H, k, anim, time) {
   const st = c.style, L = textLayout(c), t = tfAt(c, time);
   const a = anim || { alpha: 1, dx: 0, dy: 0 };
+  if (is3d(t)) { draw3d(ctx, c, W, H, k, a, time, (x, cs, an) => drawText(x, cs, W, H, k, an, time)); return; }
   const bl = blendOf(c);
   if (bl) {
     // тень, обводка и заливка смешиваются с кадром один раз, целым слоем — как в экспорте
@@ -598,7 +718,7 @@ function drawText(ctx, c, W, H, k, anim, time) {
   ctx.globalAlpha = clamp(t.opacity * a.alpha, 0, 1);
   ctx.translate((W / 2 + t.x + a.dx) * k, (H / 2 + t.y + a.dy) * k);
   ctx.rotate(t.rotation * Math.PI / 180);
-  ctx.scale(t.scale * k, t.scale * k);
+  ctx.scale(t.scale * t.sx * k, t.scale * t.sy * k);
   const x0 = -L.w / 2, y0 = -L.h / 2;
   if (st.bgOpacity > 0) {
     ctx.fillStyle = hexA(st.bgColor, st.bgOpacity / 100);
@@ -821,6 +941,7 @@ let maskLayer = null;
 function drawMedia(ctx, c, src, W, H, k, anim, srcRect, time) {
   const b = clipBox(c, W, H, time);
   const a = anim || { alpha: 1, dx: 0, dy: 0 };
+  if (is3d(b)) { draw3d(ctx, c, W, H, k, a, time, (x, cs, an) => drawMedia(x, cs, src, W, H, k, an, srcRect, time)); return; }
   const bl = blendOf(c);
   ctx.save();
   ctx.globalAlpha = clamp(b.op * a.alpha, 0, 1);
@@ -830,9 +951,12 @@ function drawMedia(ctx, c, src, W, H, k, anim, srcRect, time) {
   if (chromaOn(c) && !Player.pickingRaw) { src = chromaKeyed(src, srcRect, b.w * k, b.h * k, c.chroma); srcRect = null; }
   const dw = b.w * k, dh = b.h * k;
   const roto = Roto.on(c) && !Player.pickingRaw ? Roto.frameFor(c, time) : null;
-  if ((maskOn(c) || roto) && !Player.pickingRaw) {
-    // слой клипа: цвет, размытие, отражение — затем маска (как в экспорте), и уже слой — на кадр
-    const w = Math.max(1, Math.round(dw)), hh = Math.max(1, Math.round(dh));
+  const fxOn = clipFxOn(c);
+  if ((maskOn(c) || roto || fxOn) && !Player.pickingRaw) {
+    // слой клипа: цвет, размытие, отражение — затем маска и эффекты клипа (как в экспорте), и уже слой — на кадр
+    let w = Math.max(1, Math.round(dw)), hh = Math.max(1, Math.round(dh));
+    const pre = fxOn ? fxPreScale(c) : null;
+    if (pre) { const ms = mediaSize(c), f = Math.min(W / ms.w, H / ms.h) * pre * k; w = Math.max(1, Math.round(ms.w * f)); hh = Math.max(1, Math.round(ms.h * f)); }
     if (!maskLayer) maskLayer = document.createElement('canvas');
     if (maskLayer.width !== w || maskLayer.height !== hh) { maskLayer.width = w; maskLayer.height = hh; }
     const x = maskLayer.getContext('2d');
@@ -849,6 +973,8 @@ function drawMedia(ctx, c, src, W, H, k, anim, srcRect, time) {
     x.setTransform(1, 0, 0, 1, 0, 0);
     x.globalCompositeOperation = 'destination-in';
     if (maskOn(c)) x.drawImage(maskCanvas(c.mask, w, hh, time != null ? srcTime(c, time) : null), 0, 0);
+    x.globalCompositeOperation = 'source-over';
+    if (fxOn) applyClipFx(x, c, time);
     ctx.drawImage(maskLayer, -dw / 2, -dh / 2, dw, dh);
     ctx.restore();
     return;

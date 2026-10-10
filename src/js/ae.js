@@ -264,7 +264,7 @@ function drawBlurSamples(ctx, c, depth, sample) {
 function blurSampleClip(c, tr, t, dt, W, H) {
   const tf = tfAt(c, t + dt), tf0 = tfAt(c, t);
   const an = animState(c, t, W, H, tr), an2 = animState(c, t + dt, W, H, tr);
-  const cs = { ...c, blend: undefined, keys: null, transform: { ...c.transform, x: tf.x, y: tf.y, scale: tf.scale, rotation: tf.rotation }, opacity: tf0.opacity };
+  const cs = { ...c, blend: undefined, keys: null, _fxPre: c.kind !== 'text' ? fxPreScale(c) : null, transform: { ...c.transform, x: tf.x, y: tf.y, scale: tf.scale, rotation: tf.rotation, sx: tf.sx, sy: tf.sy, rx: tf.rx, ry: tf.ry }, opacity: tf0.opacity };
   return { cs, an: { alpha: an.alpha, dx: an2.dx, dy: an2.dy } };
 }
 

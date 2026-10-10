@@ -113,12 +113,29 @@ const Inspector = {
       if (k === 'toggle') { const added = toggleKey(c, T()); store.commit('keyframe'); toast(added ? 'Ключевой кадр добавлен' : 'Ключевой кадр удалён', 'info', 1200); }
       if (k === 'prev') { const ks = c.keys.filter(x => x.s < src - 1e-3).pop(); if (ks) store.setTime(toT(ks.s)); }
       if (k === 'next') { const ks = c.keys.find(x => x.s > src + 1e-3); if (ks) store.setTime(toT(ks.s)); }
-      if (k === 'reset') { c.keys = []; Object.assign(c.transform, { x: 0, y: 0, scale: 1, rotation: 0 }); c.opacity = 1; store.commit('reset'); }
+      if (k === 'reset') { c.keys = []; putTf(c, { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, sx: 1, sy: 1, rx: 0, ry: 0 }); delete c.transform.free; store.commit('reset'); this.render(); return; }
       Player.requestRender(); this.refresh();
     };
-    const scale = sliderRow({ label: 'Масштаб', min: 5, max: 400, value: tf().scale * 100, def: 100, unit: '%', fmt: v => Math.round(v),
-      onInput: v => { setTf(c, { scale: v / 100 }, T()); Player.requestRender(); updKf(); }, onCommit: () => store.commit('scale') });
-    sec.appendChild(scale);
+    // масштаб: равномерный (один ползунок) или отдельно по ширине и высоте, как в CapCut.
+    // c.transform.free — режим «по ширине и высоте»; ширина = scale·sx, высота = scale·sy
+    const free = !!c.transform.free || [c.transform, ...(c.keys || [])].some(o => Math.abs((o.sx ?? 1) - (o.sy ?? 1)) > 1e-4);
+    const pctRow = (label, get, set, key) => sliderRow({ label, min: 5, max: 400, value: get() * 100, def: 100, unit: '%', fmt: v => Math.round(v),
+      onInput: v => { set(v / 100); Player.requestRender(); updKf(); }, onCommit: () => store.commit(key) });
+    const scaleRows = free ? [
+      pctRow('Ширина', () => tf().scale * tf().sx, v => setTf(c, { sx: v / tf().scale }, T()), 'scale-w'),
+      pctRow('Высота', () => tf().scale * tf().sy, v => setTf(c, { sy: v / tf().scale }, T()), 'scale-h'),
+    ] : [pctRow('Масштаб', () => tf().scale, v => setTf(c, { scale: v }, T()), 'scale')];
+    scaleRows.forEach(r => sec.appendChild(r));
+    sec.appendChild(toggleRow('Равномерное масштабирование', !free, (on) => {
+      if (on) {
+        // высота становится равной ширине — во всех ключах
+        const eq = (o) => { o.scale *= o.sx ?? 1; o.sx = 1; o.sy = 1; };
+        eq(c.transform);
+        for (const kk of c.keys || []) eq(kk);
+        delete c.transform.free;
+      } else c.transform.free = true;
+      store.commit('scale-mode'); Player.requestRender(); this.render();
+    }));
     const pos = h(`<div class="prop-row"><label>Позиция</label><div class="xy">
       <div class="num-box"><span class="unit pre">X</span><input class="num" data-k="x"></div>
       <div class="num-box"><span class="unit pre">Y</span><input class="num" data-k="y"></div></div></div>`);
@@ -130,17 +147,43 @@ const Inspector = {
       numDrag(i, (d) => { setTf(c, { [i.dataset.k]: Math.round(tf()[i.dataset.k] + d) }, T()); setPos(); Player.requestRender(); updKf(); }, () => store.commit('pos'));
     });
     sec.appendChild(pos);
-    const rot = sliderRow({ label: 'Поворот', min: -180, max: 180, value: tf().rotation, def: 0, unit: '°', fmt: v => Math.round(v),
-      onInput: v => { setTf(c, { rotation: v }, T()); Player.requestRender(); updKf(); }, onCommit: () => store.commit('rot') });
+    const degRow = (label, key, tip) => {
+      const r = sliderRow({ label, min: -180, max: 180, value: tf()[key], def: 0, unit: '°', fmt: v => Math.round(v),
+        onInput: v => { setTf(c, { [key]: v }, T()); Player.requestRender(); updKf(); }, onCommit: () => store.commit(key) });
+      if (tip) $('label', r).title = tip;
+      return r;
+    };
+    const rot = degRow('Поворот', 'rotation');
     sec.appendChild(rot);
+    // 3D-поворот, как в Paint 3D (в превью — ручки сверху и справа от рамки)
+    const rx = degRow('Наклон X', 'rx', 'Поворот вокруг горизонтальной оси: верх уходит вглубь');
+    const ry = degRow('Разворот Y', 'ry', 'Поворот вокруг вертикальной оси: правый край уходит вглубь');
+    sec.appendChild(rx); sec.appendChild(ry);
     const op = sliderRow({ label: 'Непрозрачн.', min: 0, max: 100, value: tf().opacity * 100, def: 100, unit: '%', fmt: v => Math.round(v),
       onInput: v => { setTf(c, { opacity: v / 100 }, T()); Player.requestRender(); updKf(); }, onCommit: () => store.commit('opacity') });
     sec.appendChild(op);
+    // выравнивание по краям и центру кадра (по видимым габаритам объекта)
+    const al = h(`<div class="seg wide align-row">
+      <button data-a="l" title="По левому краю">${icon('alL')}</button>
+      <button data-a="ch" title="По центру по горизонтали">${icon('alCH')}</button>
+      <button data-a="r" title="По правому краю">${icon('alR')}</button>
+      <button data-a="t" title="По верхнему краю">${icon('alT')}</button>
+      <button data-a="cv" title="По центру по вертикали">${icon('alCV')}</button>
+      <button data-a="b" title="По нижнему краю">${icon('alB')}</button></div>`);
+    al.onclick = (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      const W = store.p.width, H = store.p.height, a = Player.aabb(clipBox(c, W, H, T())), v = tf();
+      const d = { l: [-a.l, 0], ch: [W / 2 - (a.l + a.r) / 2, 0], r: [W - a.r, 0], t: [0, -a.t], cv: [0, H / 2 - (a.t + a.b) / 2], b: [0, H - a.b] }[b.dataset.a];
+      setTf(c, { x: Math.round(v.x + d[0]), y: Math.round(v.y + d[1]) }, T());
+      store.commit('align'); Player.requestRender(); refresh();
+    };
+    sec.appendChild(al);
     const hint = h(`<p class="muted small kf-hint"></p>`);
     sec.appendChild(hint);
     const refresh = () => {
       const v = tf();
-      scale.set(v.scale * 100); rot.set(v.rotation); op.set(v.opacity * 100); setPos(); updKf();
+      if (free) { scaleRows[0].set(v.scale * v.sx * 100); scaleRows[1].set(v.scale * v.sy * 100); } else scaleRows[0].set(v.scale * 100);
+      rot.set(v.rotation); rx.set(v.rx); ry.set(v.ry); op.set(v.opacity * 100); setPos(); updKf();
       const n = c.keys ? c.keys.length : 0;
       hint.textContent = n ? `Ключевых кадров: ${n}. Изменения на другой позиции курсора создают новый кадр.` : 'Нажмите ◆, чтобы добавить ключевой кадр и анимировать объект.';
     };
@@ -149,8 +192,54 @@ const Inspector = {
     return sec;
   },
 
+  // открыть эффекты клипа (значок fx на таймлайне, перетаскивание эффекта на клип)
+  showFx(c) {
+    this.tabs[c.kind] = 'video';
+    if (store.sel !== c.id) store.select(c.id);
+    this.render();
+    const sec = $('.insp-sec.fx-sec', this.root);
+    if (!sec) return;
+    if (sec.classList.contains('collapsed')) $('.sec-title > span', sec).click();
+    sec.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    sec.classList.remove('flash'); void sec.offsetWidth; sec.classList.add('flash');
+  },
+
+  // ---------------------------------------------------------------- эффекты на клипе (c.fx)
+  clipFxSection(body, c) {
+    const add = h(`<button class="icon-btn tiny" title="Добавить эффект">${icon('plus')}</button>`);
+    add.onclick = () => { Panels.show('effects'); };
+    const sec = this.section(body, 'Эффекты', add);
+    sec.parentElement.classList.add('fx-sec');
+    const list = c.fx || [];
+    if (!list.length) {
+      sec.appendChild(h(`<p class="muted small">Перетащите эффект из панели «Эффекты» на клип на таймлайне — он будет действовать только на этот клип.</p>`));
+      return;
+    }
+    const live = () => { Player.requestRender(); Timeline.render(); };
+    list.forEach((f, i) => {
+      const fx = EFFECT_BY_ID[f.effect];
+      f.params = f.params || { strength: 60, speed: 50 };
+      const box = h(`<div class="cfx ${f.on === false ? 'off' : ''}">
+        <div class="cfx-head">
+          <button class="switch ${f.on !== false ? 'on' : ''}" title="Включить / выключить"><i></i></button>
+          <b>${esc(fx ? fx.name : 'Неизвестный эффект')}</b>
+          <button class="icon-btn tiny" data-a="up" title="Выше" ${i ? '' : 'disabled'}><span style="display:inline-flex;transform:rotate(-90deg)">${icon('chevronRight')}</span></button>
+          <button class="icon-btn tiny" data-a="del" title="Удалить эффект">${icon('trash')}</button>
+        </div></div>`);
+      $('.switch', box).onclick = () => { f.on = f.on === false; store.commit('fx-clip-on'); live(); this.render(); };
+      $('[data-a=del]', box).onclick = () => { list.splice(i, 1); if (!list.length) delete c.fx; store.commit('fx-clip-del'); live(); this.render(); };
+      $('[data-a=up]', box).onclick = () => { if (!i) return; list.splice(i - 1, 0, list.splice(i, 1)[0]); store.commit('fx-clip-order'); live(); this.render(); };
+      if (fx && fx.strength !== false) box.appendChild(sliderRow({ label: 'Сила', min: 0, max: 100, value: f.params.strength ?? 60, def: 60, fmt: v => Math.round(v),
+        onInput: v => { f.params.strength = v; Player.requestRender(); }, onCommit: () => store.commit('fx-param') }));
+      if (fx && fx.speed !== false) box.appendChild(sliderRow({ label: 'Скорость', min: 0, max: 100, value: f.params.speed ?? 50, def: 50, fmt: v => Math.round(v),
+        onInput: v => { f.params.speed = v; Player.requestRender(); }, onCommit: () => store.commit('fx-param') }));
+      sec.appendChild(box);
+    });
+  },
+
   videoTab(body, c) {
     this.transformSection(body, c);
+    this.clipFxSection(body, c);
     const sec = this.section(body, 'Кадрирование и положение');
     const row = h(`<div class="btn-grid">
       <button class="chip-btn" data-a="fit">${icon('fit')}Вписать</button>

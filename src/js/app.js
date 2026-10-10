@@ -218,6 +218,7 @@ const App = {
         { label: 'Вставить атрибуты…', icon: 'pasteAttr', key: 'Ctrl+Alt+V', disabled: !(c && this.attrs), onClick: () => this.pasteAttrs() },
         { label: 'Удалить', icon: 'trash', key: 'Del', disabled: !c, onClick: () => Timeline.deleteSel() },
         { label: 'Удалить со сдвигом', key: 'Shift+Del', disabled: !c, onClick: () => Edit.rippleDelete() },
+        { label: 'Выделить всё', key: 'Ctrl+A', onClick: () => Timeline.selectAll() },
         '-',
         { label: 'Разделить', icon: 'split', key: Edit.K('split'), disabled: !Timeline.splitTarget(), onClick: () => Timeline.split() },
         { label: 'Разделить на всех дорожках', key: Edit.K('splitAll'), onClick: () => Edit.splitAll() },
@@ -237,7 +238,7 @@ const App = {
       ],
       clip: [
         { label: 'Ключевой кадр', icon: 'diamond', key: Edit.K('keyframe'), disabled: !(vis && inClip), onClick: () => { toggleKey(c, store.time); store.commit('keyframe'); Player.requestRender(); } },
-        { label: 'Удалить все ключевые кадры', disabled: !(vis && c.keys && c.keys.length), onClick: () => { const t = tfAt(c, store.time); c.keys = []; Object.assign(c.transform, { x: t.x, y: t.y, scale: t.scale, rotation: t.rotation }); c.opacity = t.opacity; store.commit('keys-clear'); Player.requestRender(); } },
+        { label: 'Удалить все ключевые кадры', disabled: !(vis && c.keys && c.keys.length), onClick: () => { const t = tfAt(c, store.time); c.keys = []; putTf(c, t); store.commit('keys-clear'); Player.requestRender(); } },
         '-',
         { label: 'Отделить аудио', icon: 'unlink', disabled: !(c && c.kind === 'video' && hasAudioTrack(c) && !c.muted), onClick: () => Timeline.detachAudio() },
         { label: 'Стоп-кадр', icon: 'snow', disabled: !(c && c.kind === 'video'), onClick: () => Timeline.freeze() },
@@ -343,6 +344,7 @@ const App = {
       else if (ctrl && code === 'KeyC') this.copy();
       else if (ctrl && code === 'KeyX') { this.copy(); Timeline.deleteSel(); }
       else if (ctrl && code === 'KeyV') this.paste();
+      else if (ctrl && !e.shiftKey && code === 'KeyA') Timeline.selectAll();
       else if (ctrl && code === 'KeyQ') { this.save().then(() => window.api.winClose()); }
       else if (ctrl) handled = false;
       else if (k === 'delete' || k === 'backspace') Timeline.deleteSel();
@@ -375,6 +377,7 @@ const App = {
     { id: 'color', name: 'Цвет и фильтр', ok: c => !!c.adjust, keys: ['adjust', 'filter', 'curves'] },
     { id: 'chroma', name: 'Хромакей', ok: c => !!c.chroma, keys: ['chroma'] },
     { id: 'mask', name: 'Маска', ok: c => c.kind === 'video' || c.kind === 'image', keys: ['mask'] },
+    { id: 'fx', name: 'Эффекты клипа', ok: c => c.kind === 'video' || c.kind === 'image', keys: ['fx'] },
     { id: 'blend', name: 'Наложение', ok: c => isVisual(c), keys: ['blend'] },
     { id: 'anim', name: 'Анимации и размытие в движении', ok: c => !!c.anim, keys: ['anim', 'tanim', 'mblur'] },
     { id: 'matte', name: 'Слой-маска (Track Matte)', ok: c => isVisual(c), keys: ['matte'] },
@@ -427,12 +430,14 @@ const App = {
   },
 
   copy() {
-    const s = store.selected();
-    if (!s) return;
-    const cb = this.clipboard = { clip: deep(s.clip), kind: Timeline.trackKindOf(s.clip), main: s.track.main };
+    const list = store.selectedAll();
+    if (!list.length) return;
+    // несколько клипов — с взаимным расположением во времени (off — от начала первого)
+    const a = Math.min(...list.map(x => x.clip.start));
+    const cb = this.clipboard = { items: list.map(x => ({ clip: deep(x.clip), off: x.clip.start - a, kind: Timeline.trackKindOf(x.clip), main: x.track.main })) };
     // отпечаток системного буфера: пока он не сменился, Ctrl+V вставляет этот клип, а не картинку/файл из буфера
     cb.sigP = window.api.clipRead().then(r => { cb.sig = r.sig; }).catch(() => { });
-    toast('Клип скопирован', 'info', 1200);
+    toast(list.length > 1 ? `Скопировано клипов: ${list.length}` : 'Клип скопирован', 'info', 1200);
   },
   // Ctrl+V: свой скопированный клип, файлы из файлового менеджера, картинка (скриншот) или ссылка на видео
   async paste() {
@@ -463,17 +468,21 @@ const App = {
   },
   pasteClip() {
     if (!this.clipboard) return;
-    const c = deep(this.clipboard.clip);
-    c.id = uid();
-    c.start = store.time;
-    c.trans = null;
-    if (this.clipboard.main && store.magnet) {
-      const mc = store.mainTrack().clips;
-      let i = mc.findIndex(x => x.start + clipDur(x) / 2 > store.time); if (i < 0) i = mc.length;
-      mc.splice(i, 0, c);
-      store.packMain();
-    } else store.place(c, this.clipboard.kind);
-    store.select(c.id);
+    const ids = [];
+    let mi = null; // место вставки на главной дорожке (клипы группы идут подряд)
+    this.clipboard.items.forEach((it) => {
+      const c = deep(it.clip);
+      c.id = uid();
+      c.start = store.time + it.off;
+      if (it.main && store.magnet) {
+        const mc = store.mainTrack().clips;
+        if (mi == null) { mi = mc.findIndex(x => x.start + clipDur(x) / 2 > store.time); if (mi < 0) mi = mc.length; c.trans = null; }
+        mc.splice(mi++, 0, c);
+      } else { c.trans = null; store.place(c, it.kind); }
+      ids.push(c.id);
+    });
+    store.packMain();
+    store.selectMany(ids);
     store.commit('paste');
   },
 
@@ -493,7 +502,7 @@ const App = {
       ['Монтаж', [
         [K('split'), 'Разделить клип'], [K('splitAll'), 'Разделить на всех дорожках'], ['Q / W', 'Удалить слева / справа от курсора'],
         ['Delete', 'Удалить клип'], ['Shift+Delete', 'Удалить со сдвигом'], ['Shift+E', 'Включить / отключить клип'], ['Ctrl+R', 'Скорость и длительность'],
-        ['D', 'Выбрать клип под курсором'], ['Alt+← / →', 'Сдвинуть клип на кадр (Shift — на 5)'], ['Ctrl+D', 'Дублировать'],
+        ['D', 'Выбрать клип под курсором'], ['Протянуть по пустому месту', 'Выделить рамкой несколько клипов'], ['Ctrl / Shift+щелчок', 'Добавить клип к выделению'], ['Ctrl+A', 'Выделить все клипы'], ['Alt+← / →', 'Сдвинуть клип на кадр (Shift — на 5)'], ['Ctrl+D', 'Дублировать'],
         ['Ctrl+C / Ctrl+V', 'Копировать / вставить (клип, файлы, картинку или ссылку из буфера)'], ['Ctrl+Shift+I', 'Импорт по ссылке (YouTube, TikTok…)'], ['Ctrl+Alt+C / Ctrl+Alt+V', 'Копировать / вставить атрибуты'], ['Ctrl+Z / Ctrl+Shift+Z', 'Отменить / повторить'],
         [K('marker'), 'Маркер (ещё раз — удалить)'], ['T', 'Добавить текст'], [K('keyframe'), 'Ключевой кадр'], [K('voice'), 'Записать озвучку'],
       ]],

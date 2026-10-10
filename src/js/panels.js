@@ -408,7 +408,7 @@ const Panels = {
   effectsCat(root, cat) {
     const s = store.selected();
     const selFx = s && s.clip.kind === 'effect' ? s.clip : null;
-    root.appendChild(h(`<div class="lp-sub">${selFx ? 'Нажмите, чтобы заменить выбранный эффект' : 'Нажмите, чтобы добавить на позицию курсора'}</div>`));
+    root.appendChild(h(`<div class="lp-sub">${selFx ? 'Нажмите, чтобы заменить выбранный эффект' : 'Нажмите — на позицию курсора · перетащите на клип — только на него'}</div>`));
     const grid = h('<div class="fx-grid"></div>');
     const src = FxPreview.source();
     const draws = [];
@@ -423,12 +423,28 @@ const Panels = {
       t.onmouseenter = () => { cv._redraw = null; FxPreview.animate(cv, (T) => FxPreview.effect(cv, fx, src, T), 3); };
       t.onmouseleave = () => { FxPreview.stop(); cv._redraw = () => FxPreview.effect(cv, fx, src, fx.tileT ?? 0.35); cv._redraw(); };
       t.onclick = () => this.addEffect(fx.id, selFx);
+      // перетаскивание на клип таймлайна — эффект клипа (как в Premiere Pro)
+      t.draggable = true;
+      t.ondragstart = (e) => {
+        FxPreview.stop();
+        e.dataTransfer.setData('application/x-lincut-fx', fx.id);
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setDragImage(cv, 40, 24);
+      };
+      t.oncontextmenu = (e) => {
+        e.preventDefault();
+        const sc = store.selected(), c = sc && (sc.clip.kind === 'video' || sc.clip.kind === 'image') ? sc.clip : null;
+        showMenu(e.clientX, e.clientY, [
+          { label: c ? 'Применить к выбранному клипу' : 'Применить к клипу (выберите видео или фото)', icon: 'sparkles', disabled: !c, onClick: () => { addClipFx(c, fx.id); store.commit('fx-clip'); Inspector.showFx(c); Player.requestRender(); } },
+          { label: 'Добавить на дорожку эффектов', icon: 'plus', onClick: () => this.addEffect(fx.id, null) },
+        ]);
+      };
       grid.appendChild(t);
     }
     root.appendChild(grid);
     draws.forEach(f => f());
   },
-  addEffect(id, replace) {
+  addEffect(id, replace, at) {
     if (replace) {
       replace.effect = id;
       store.commit('fx-replace');
@@ -436,7 +452,7 @@ const Panels = {
       this.render();
       return;
     }
-    const t = store.time, total = store.duration();
+    const t = at ?? store.time, total = store.duration();
     const dur = total > 0 && t < total ? Math.min(3, Math.max(0.5, total - t)) : 3;
     const c = makeEffectClip(t, id, dur);
     store.place(c, 'effect');

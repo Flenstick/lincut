@@ -579,6 +579,7 @@ input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.1); }
 .seg button.on { background: var(--panel-4); color: var(--text); }
 .seg.wide { width: 100%; }
 .seg.wide button { flex: 1; }
+.align-row { margin-top: 4px; }
 .prop-row .seg + .seg { margin-left: auto; }
 .color-row { align-items: flex-start; }
 .color-row > label { padding-top: 2px; }
@@ -723,6 +724,7 @@ input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.1); }
 .tl-playhead { position: absolute; top: 0; bottom: 0; left: 0; width: 0; z-index: 7; pointer-events: none; }
 .tl-playhead::before { content: ""; position: absolute; top: 0; bottom: 0; left: -0.5px; width: 1px; background: var(--playhead); }
 .tl-playhead i { position: absolute; top: 3px; left: -5px; width: 11px; height: 14px; background: var(--playhead); pointer-events: auto; cursor: ew-resize; clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%); border-radius: 2px 2px 0 0; }
+.tl-marquee { position: absolute; left: 0; top: 0; z-index: 9; pointer-events: none; border: 1px solid var(--accent); border-radius: 2px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .tl-snapline { position: absolute; top: 24px; bottom: 0; left: 0; width: 1px; background: var(--accent); z-index: 8; pointer-events: none; }
 .tl-insert { position: absolute; top: 0; left: -1px; width: 2px; background: var(--sel); z-index: 8; pointer-events: none; }
 .tl-empty { position: absolute; left: 124px; right: 0; top: 24px; bottom: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-3); pointer-events: none; }
@@ -1138,3 +1140,19 @@ body.dragging .splitter-v:hover::after, body.dragging .splitter-h:hover::after {
 .keys .keys-group { padding: 12px 0 4px; border-bottom: 0; color: var(--text); font-weight: 600; font-size: 12px; }
 .keys .keys-group:first-child { padding-top: 0; }
 .ctx-menu { max-height: calc(100vh - 12px); overflow-y: auto; }
+
+/* ---------------------------------------------------------------- эффекты на клипе (fx) */
+.cl-badges b.fx-badge { pointer-events: auto; cursor: pointer; background: #e8b931; color: #1a1400; text-shadow: none; font-style: italic; font-weight: 700; letter-spacing: .2px; padding: 0 4px; display: inline-flex; align-items: center; gap: 2px; }
+.cl-badges b.fx-badge i { font-style: normal; font-weight: 600; font-size: 8.5px; opacity: .8; }
+.cl-badges b.fx-badge.off { background: rgba(0, 0, 0, .5); color: var(--text-2); }
+.cl-badges b.fx-badge:hover { filter: brightness(1.15); }
+.clip.fx-target { outline: 2px solid #e8b931; outline-offset: -2px; }
+.clip.fx-target::after { content: "fx"; position: absolute; right: 6px; bottom: 3px; font: italic 700 11px "Golos Text", sans-serif; color: #1a1400; background: #e8b931; padding: 0 5px; border-radius: 3px; z-index: 5; }
+.cfx { border-top: 1px solid var(--line, rgba(255, 255, 255, .06)); padding-top: 6px; margin-top: 4px; }
+.cfx:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.cfx-head { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.cfx-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.cfx.off .cfx-head b { color: var(--text-3); text-decoration: line-through; }
+.cfx.off .slider-row { opacity: .45; }
+.insp-sec.flash { animation: fxFlash .9s var(--ease-out, ease-out); }
+@keyframes fxFlash { 0% { box-shadow: inset 0 0 0 1.5px #e8b931; } 100% { box-shadow: inset 0 0 0 1.5px transparent; } }

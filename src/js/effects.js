@@ -977,6 +977,64 @@ function effectOps(c) {
   return e.ops(fxParams(c, store.p.width, store.p.height));
 }
 
+// ---------------------------------------------------------------- эффекты на клипе (как в Premiere Pro)
+// c.fx = [{ id, effect, params: { strength, speed }, on }] — у видео и картинок. Эффект действует на картинку
+// самого клипа (после цвета, отражения и масок, до трансформации), на всю длину клипа.
+// Прозрачность клипа сохраняется: эффект считается по картинке на чёрном, затем возвращается исходная альфа.
+function clipFxOn(c) { return !!(c && c.fx && c.fx.some(f => f.on !== false && EFFECT_BY_ID[f.effect])); }
+// AR — соотношение сторон картинки клипа (для эффектов «экран»)
+function clipFxOps(c, AR) {
+  if (!c.fx) return [];
+  const D = Math.max(0.05, clipDur(c));
+  return c.fx.filter(f => f.on !== false && EFFECT_BY_ID[f.effect]).map(f => {
+    const pr = f.params || {};
+    return { f, ops: EFFECT_BY_ID[f.effect].ops({ I: (pr.strength ?? 60) / 100, V: Math.pow(4, ((pr.speed ?? 50) - 50) / 50), D, AR }) };
+  });
+}
+// у клипа может быть прозрачность — её нужно вернуть после эффекта
+function clipHasAlpha(c) { return c.kind === 'image' || chromaOn(c) || maskOn(c) || Roto.on(c); }
+function addClipFx(c, effect) {
+  c.fx = c.fx || [];
+  const f = { id: uid(), effect, params: { strength: 60, speed: 50 }, on: true };
+  c.fx.push(f);
+  return f;
+}
+// клип с анимацией ключами экспорт готовит один раз в размере наибольшего масштаба (keyedLayer, sPre) —
+// эффект считается в этом размере, и превью делает так же
+function fxPreScale(c) {
+  if (c._fxPre) return c._fxPre;
+  if (!c.keys || c.keys.length < 2) return null;
+  return clamp(Math.max(...c.keys.map(k => { const q = keyPick(k); return q.scale * Math.max(q.sx, q.sy); })), 0.05, 4);
+}
+const clipFxState = {};
+let clipFxAlpha = null;
+// превью: x — холст слоя клипа (размер картинки клипа), time — время таймлайна
+function applyClipFx(x, c, time) {
+  const cv = x.canvas, w = cv.width, hh = cv.height;
+  const list = clipFxOps(c, w / hh);
+  if (!list.length) return;
+  const alpha = clipHasAlpha(c);
+  if (alpha) {
+    if (!clipFxAlpha) clipFxAlpha = document.createElement('canvas');
+    const A = clipFxAlpha;
+    if (A.width !== w || A.height !== hh) { A.width = w; A.height = hh; }
+    const ax = A.getContext('2d');
+    ax.globalCompositeOperation = 'copy'; ax.drawImage(cv, 0, 0); ax.globalCompositeOperation = 'source-over';
+  }
+  x.save();
+  x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.filter = 'none';
+  x.globalCompositeOperation = 'destination-over'; x.fillStyle = '#000'; x.fillRect(0, 0, w, hh);
+  x.restore();
+  const T = time != null ? time - c.start : 0, D = Math.max(0.05, clipDur(c));
+  for (const { f, ops } of list) FXRun.apply(x, ops, T, D, clipFxState[c.id + ':' + f.id] || (clipFxState[c.id + ':' + f.id] = {}));
+  if (alpha) {
+    x.save();
+    x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.filter = 'none';
+    x.globalCompositeOperation = 'destination-in'; x.drawImage(clipFxAlpha, 0, 0);
+    x.restore();
+  }
+}
+
 // ---------------------------------------------------------------- «эдит»-переходы (эффект на стыке)
 // U — положение относительно стыка (-1..1), A — близость к стыку (0..1..0)
 function transFxOps(type, D) {

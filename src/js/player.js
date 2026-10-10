@@ -341,12 +341,10 @@ const Player = {
     if (store.time < c.start || store.time >= clipEnd(c)) return null;
     return { c, b: clipBox(c, store.p.width, store.p.height, store.time) };
   },
+  // углы коробки (с 3D-поворотом — углы четырёхугольника на экране)
   corners(b) {
-    const r = b.rot * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
-    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
-      const x = sx * b.w / 2, y = sy * b.h / 2;
-      return [b.cx + x * cs - y * sn, b.cy + x * sn + y * cs];
-    });
+    const W = store.p.width, H = store.p.height;
+    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => boxPoint(b, sx * b.w / 2, sy * b.h / 2, W, H));
   },
   // габариты повёрнутой коробки по осям
   aabb(b) {
@@ -354,10 +352,15 @@ const Player = {
     const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
     return { l: Math.min(...xs), r: Math.max(...xs), t: Math.min(...ys), b: Math.max(...ys), cx: b.cx, cy: b.cy };
   },
-  rotHandle(b) {
-    const r = b.rot * Math.PI / 180;
-    const d = b.h / 2 + 26 / this.cssScale;
-    return [b.cx - Math.sin(r) * d, b.cy + Math.cos(r) * d];
+  // Ручки поворота, как в Paint 3D: снизу — в плоскости кадра, сверху — наклон (ось X), справа — разворот (ось Y).
+  // Ставятся у середины стороны (с 3D — у её проекции) и выносятся наружу по нормали стороны.
+  rotHandles(b) {
+    const W = store.p.width, H = store.p.height, r = b.rot * Math.PI / 180, off = 26 / this.cssScale;
+    const at = (u, v, nx, ny) => {
+      const [x, y] = boxPoint(b, u, v, W, H);
+      return [x + (nx * Math.cos(r) - ny * Math.sin(r)) * off, y + (nx * Math.sin(r) + ny * Math.cos(r)) * off];
+    };
+    return { rotate: at(0, b.h / 2, 0, 1), rotX: at(0, -b.h / 2, 0, -1), rotY: at(b.w / 2, 0, 1, 0) };
   },
   // Направляющие: края и центр кадра + края и центры других видимых объектов
   snapTargets(exceptId) {
@@ -423,10 +426,20 @@ const Player = {
       o.fillStyle = '#fff'; o.fillRect(x - 4.5 * dpr, y - 4.5 * dpr, 9 * dpr, 9 * dpr);
       o.strokeStyle = 'rgba(0,0,0,.45)'; o.lineWidth = dpr; o.strokeRect(x - 4.5 * dpr, y - 4.5 * dpr, 9 * dpr, 9 * dpr);
     }
-    const [rx, ry] = this.rotHandle(s.b);
-    o.fillStyle = '#fff'; o.beginPath(); o.arc(rx * k, ry * k, 8 * dpr, 0, Math.PI * 2); o.fill();
-    o.strokeStyle = '#222'; o.lineWidth = 1.5 * dpr;
-    o.beginPath(); o.arc(rx * k, ry * k, 4 * dpr, -Math.PI * 0.9, Math.PI * 0.55); o.stroke();
+    // ручки поворота: значок — круговая стрелка (в плоскости) или эллипс вдоль оси вращения (3D)
+    const hs = this.rotHandles(s.b);
+    for (const [name, [hx, hy]] of Object.entries(hs)) {
+      const X = hx * k, Y = hy * k, on = this.hotHandle === name;
+      o.fillStyle = on ? css('--accent') : '#fff'; o.beginPath(); o.arc(X, Y, 8 * dpr, 0, Math.PI * 2); o.fill();
+      o.strokeStyle = 'rgba(0,0,0,.35)'; o.lineWidth = dpr; o.stroke();
+      o.strokeStyle = '#222'; o.lineWidth = 1.5 * dpr;
+      o.beginPath();
+      if (name === 'rotate') o.arc(X, Y, 4 * dpr, -Math.PI * 0.9, Math.PI * 0.55);
+      else if (name === 'rotX') o.ellipse(X, Y, 2.2 * dpr, 4.6 * dpr, 0, 0, Math.PI * 2);
+      else o.ellipse(X, Y, 4.6 * dpr, 2.2 * dpr, 0, 0, Math.PI * 2);
+      o.stroke();
+      if (name !== 'rotate') { o.fillStyle = '#222'; o.beginPath(); o.arc(X, Y, 1.4 * dpr, 0, Math.PI * 2); o.fill(); }
+    }
     // подсказка во время перетаскивания
     if (this.badge) {
       o.font = `600 ${11 * dpr}px "Golos Text", "Adwaita Sans", sans-serif`;
@@ -686,8 +699,7 @@ const Player = {
     if (!s) return null;
     const hr = 11 / this.cssScale;
     if (this.corners(s.b).some(([x, y]) => Math.hypot(x - px, y - py) < hr)) return 'scale';
-    const [rx, ry] = this.rotHandle(s.b);
-    if (Math.hypot(rx - px, ry - py) < hr) return 'rotate';
+    for (const [name, [hx, hy]] of Object.entries(this.rotHandles(s.b))) if (Math.hypot(hx - px, hy - py) < hr) return name;
     if (inBox(s.b, px, py)) return 'move';
     return null;
   },
@@ -707,7 +719,7 @@ const Player = {
       if (mh) { ov.style.cursor = mh === 'mmove' ? 'move' : mh === 'mrot' ? 'grab' : 'nwse-resize'; return; }
       const h_ = this.handleAt(px, py);
       const hc = h_ ? null : this.hitClip(px, py);
-      ov.style.cursor = h_ === 'scale' ? 'nwse-resize' : h_ === 'rotate' ? 'grab' : h_ === 'move' ? 'move' : hc ? 'pointer' : 'default';
+      ov.style.cursor = h_ === 'scale' ? 'nwse-resize' : h_ && h_.startsWith('rot') ? 'grab' : h_ === 'move' ? 'move' : hc ? 'pointer' : 'default';
       if (hc !== this.hoverClip) { this.hoverClip = hc; this.drawOverlay(); }
     });
     ov.addEventListener('mouseleave', () => { if (this.hoverClip) { this.hoverClip = null; this.drawOverlay(); } });
@@ -768,15 +780,27 @@ const Player = {
           if (ev.shiftKey) deg = Math.round(deg / 15) * 15;
           setTf(c, { rotation: Math.round(deg * 10) / 10 }, T);
           this.badge = Math.round(deg) + '°';
+        } else if (mode === 'rotX' || mode === 'rotY') {
+          // 3D: тянуть верхнюю ручку вниз — верх уходит вглубь; правую влево — правый край уходит вглубь
+          const key = mode === 'rotX' ? 'rx' : 'ry';
+          const d = (mode === 'rotX' ? qy - py : px - qx) * this.cssScale;
+          let deg = t0[key] + d * 0.5;
+          deg = ((deg % 360) + 540) % 360 - 180;
+          if (!ev.altKey) for (const sn of [-180, -90, 0, 90, 180]) if (Math.abs(deg - sn) < 3) deg = sn;
+          if (ev.shiftKey) deg = Math.round(deg / 15) * 15;
+          setTf(c, { [key]: Math.round(deg * 10) / 10 }, T);
+          this.hotHandle = mode;
+          this.badge = (mode === 'rotX' ? 'X ' : 'Y ') + Math.round(deg) + '°';
         }
         bus.emit('transform');
         this.requestRender();
       }, () => {
         this.guides = null;
         this.badge = null;
+        this.hotHandle = null;
         store.commit('transform');
         this.requestRender();
-      }, mode === 'move' ? 'move' : mode === 'rotate' ? 'grabbing' : 'nwse-resize');
+      }, mode === 'move' ? 'move' : mode.startsWith('rot') ? 'grabbing' : 'nwse-resize');
     });
     // Delete — удалить выбранную вершину маски пером (а не клип)
     document.addEventListener('keydown', (e) => {
@@ -1150,6 +1174,19 @@ const Player = {
 };
 
 function inBox(b, px, py) {
+  if (is3d(b)) {
+    // четырёхугольник на экране: точка внутри, если по одну сторону от всех рёбер
+    const q = Player.corners(b);
+    let sg = 0;
+    for (let i = 0; i < 4; i++) {
+      const [x1, y1] = q[i], [x2, y2] = q[(i + 1) % 4];
+      const cr = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1);
+      if (Math.abs(cr) < 1e-9) continue;
+      if (sg && Math.sign(cr) !== sg) return false;
+      sg = Math.sign(cr);
+    }
+    return true;
+  }
   const r = -b.rot * Math.PI / 180;
   const dx = px - b.cx, dy = py - b.cy;
   const x = dx * Math.cos(r) - dy * Math.sin(r), y = dx * Math.sin(r) + dy * Math.cos(r);

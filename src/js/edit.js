@@ -260,6 +260,7 @@ const Edit = {
         if (c.start < a - eps) mid = Timeline.splitAt(c, tr, a);
         if (clipEnd(mid) > b + eps) Timeline.splitAt(mid, tr, b);
         tr.clips.splice(tr.clips.indexOf(mid), 1);
+        store.sels = store.sels.filter(id => id !== mid.id);
         if (store.sel === mid.id) store.sel = null;
         touched = true;
       }

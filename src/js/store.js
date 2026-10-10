@@ -43,7 +43,8 @@ function defaultProjectName() {
 const store = {
   p: null,             // текущий проект
   dir: null,           // папка проекта
-  sel: null,           // id выделенного клипа
+  sel: null,           // id выделенного клипа (главного — его показывает инспектор и превью)
+  sels: [],            // все выделенные клипы (рамкой, Ctrl/Shift+клик); sel — один из них
   time: 0,             // позиция курсора
   magnet: true,
   snap: true,
@@ -53,7 +54,7 @@ const store = {
   dirty: false,
 
   load(p, dir) {
-    this.p = p; this.dir = dir; this.sel = null; this.time = 0;
+    this.p = p; this.dir = dir; this.sel = null; this.sels = []; this.time = 0;
     p.markers = p.markers || [];
     for (const t of p.tracks) for (const c of t.clips) normalizeClip(c);
     this.undoStack = []; this.redoStack = [];
@@ -80,7 +81,8 @@ const store = {
     const o = JSON.parse(s);
     Object.assign(this.p, o);
     this.last = s;
-    if (this.sel && !this.find(this.sel)) this.sel = null;
+    this.sels = this.sels.filter(id => this.find(id));
+    if (this.sel && !this.find(this.sel)) this.sel = this.sels[this.sels.length - 1] || null;
     this.dirty = true;
     bus.emit('edit'); bus.emit('project'); bus.emit('selection'); bus.emit('changed');
   },
@@ -94,7 +96,26 @@ const store = {
     return null;
   },
   selected() { return this.sel ? this.find(this.sel) : null; },
-  select(id) { if (this.sel === id) return; this.sel = id; bus.emit('selection'); },
+  select(id) {
+    if (this.sel === id && this.sels.length === (id ? 1 : 0)) return;
+    this.sel = id; this.sels = id ? [id] : [];
+    bus.emit('selection');
+  },
+  // несколько клипов; primary — главный (по умолчанию последний)
+  selectMany(ids, primary) {
+    ids = [...new Set(ids)];
+    const sel = ids.includes(primary) ? primary : ids[ids.length - 1] || null;
+    if (sel === this.sel && ids.length === this.sels.length && ids.every(id => this.sels.includes(id))) return;
+    this.sel = sel; this.sels = ids;
+    bus.emit('selection');
+  },
+  toggleSel(id) {
+    if (this.sels.includes(id)) this.selectMany(this.sels.filter(x => x !== id), this.sel === id ? undefined : this.sel);
+    else this.selectMany([...this.sels, id], id);
+  },
+  isSel(id) { return this.sels.includes(id); },
+  // все выделенные клипы { clip, track } в порядке дорожек и времени
+  selectedAll() { return this.allClips().filter(f => this.sels.includes(f.clip.id)); },
   mainTrack() { return this.p.tracks.find(t => t.main); },
   allClips() { return this.p.tracks.flatMap(t => t.clips.map(c => ({ clip: c, track: t }))); },
   duration() {
@@ -153,7 +174,11 @@ const store = {
       if (i >= 0) { t.clips.splice(i, 1); break; }
     }
     // событие выделения — после commit вызывающего кода, чтобы таймлайн успел анимировать перестройку
-    if (this.sel === id) { this.sel = null; queueMicrotask(() => bus.emit('selection')); }
+    if (this.sels.includes(id)) {
+      this.sels = this.sels.filter(x => x !== id);
+      if (this.sel === id) this.sel = this.sels[this.sels.length - 1] || null;
+      queueMicrotask(() => bus.emit('selection'));
+    }
     this.packMain();
     this.cleanupTracks();
   },

@@ -58,8 +58,7 @@ const Timeline = {
     this.tracksEl.addEventListener('mousedown', (e) => {
       if (e.button !== 0 || e.target.closest('.clip') || e.target.closest('.tl-head')) return;
       if (Edit.tool === 'hand') { Edit.pan(e); return; }
-      store.select(null);
-      this.scrub(e);
+      this.marquee(e);
     });
     // ПКМ по пустому месту дорожки — закрыть пробел (ripple delete), как в Premiere
     this.tracksEl.addEventListener('contextmenu', (e) => {
@@ -139,7 +138,6 @@ const Timeline = {
     const vw = this.scroll.clientWidth - HEAD_W;
     const contentW = Math.max(vw, (dur + Math.max(20, dur * 0.35)) * this.pps, ((this.rec ? this.rec.end : 0) + 20) * this.pps);
     this.canvasEl.style.width = (HEAD_W + contentW) + 'px';
-    const sel = store.sel;
     const used = new Set();
 
     const rowsOrder = [...p.tracks];
@@ -165,7 +163,7 @@ const Timeline = {
           R.clips[c.id] = el;
           R.lane.appendChild(el);
         } else if (el.parentNode !== R.lane) R.lane.appendChild(el);
-        this.updateClipEl(el, c, t, c.id === sel);
+        this.updateClipEl(el, c, t, store.isSel(c.id));
       }
       for (const id of Object.keys(R.clips)) if (!seen.has(id)) { R.clips[id].remove(); delete R.clips[id]; }
       if (t.main) this.renderTransMarks(R, t);
@@ -341,7 +339,12 @@ const Timeline = {
     </div>`);
     el.dataset.id = c.id;
     el.addEventListener('mousedown', (e) => this.onClipDown(e, el.dataset.id));
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); store.select(el.dataset.id); this.clipMenu(e.clientX, e.clientY); });
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      // ПКМ по клипу из группы — меню для всей группы
+      if (!(store.sels.length > 1 && store.isSel(el.dataset.id))) store.select(el.dataset.id);
+      this.clipMenu(e.clientX, e.clientY);
+    });
     return el;
   },
 
@@ -358,6 +361,11 @@ const Timeline = {
     if (nm.textContent !== name) nm.textContent = name;
     $('.cl-dur', el).textContent = fmtSec(clipDur(c));
     let badges = '';
+    // эффекты на клипе — значок fx, как в Premiere Pro
+    if (c.fx && c.fx.length) {
+      const n = c.fx.length, on = clipFxOn(c);
+      badges += `<b class="fx-badge${on ? '' : ' off'}" title="Эффекты клипа: ${c.fx.map(f => EFFECT_BY_ID[f.effect] ? EFFECT_BY_ID[f.effect].name : '?').join(', ')}">fx${n > 1 ? `<i>${n}</i>` : ''}</b>`;
+    }
     if (c.disabled) badges += icon('prohibit');
     if (c.kind === 'text') badges += icon('type');
     if (c.kind === 'effect') badges += icon('sparkles');
@@ -586,8 +594,9 @@ const Timeline = {
     test(0);
     if (!noPlayhead) test(store.time);
     for (const m of store.p.markers || []) if (m.id !== excludeMarker) test(m.t);
+    const skip = excludeId instanceof Set ? (id) => excludeId.has(id) : (id) => id === excludeId;
     for (const t_ of store.p.tracks) for (const c of t_.clips) {
-      if (c.id === excludeId) continue;
+      if (skip(c.id)) continue;
       test(c.start); test(clipEnd(c));
     }
     return best;
@@ -613,6 +622,12 @@ const Timeline = {
     e.stopPropagation();
     const f = store.find(id);
     if (!f) return;
+    if (e.target.closest('.fx-badge')) {
+      // значок fx — к эффектам клипа в инспекторе
+      store.select(id);
+      Inspector.showFx(f.clip);
+      return;
+    }
     if (e.target.classList.contains('kf')) {
       // клик по ромбику — перейти к ключевому кадру
       store.select(id);
@@ -621,9 +636,16 @@ const Timeline = {
     }
     if (Player.playing) Player.pause();
     if (Edit.clipDown(e, f, e.currentTarget)) return;
+    const side = e.target.classList.contains('clip-h') ? (e.target.classList.contains('l') ? 'l' : 'r') : null;
+    // Ctrl/Shift+щелчок — добавить клип к выделению или убрать из него
+    if (!side && (e.ctrlKey || e.metaKey || e.shiftKey)) { store.toggleSel(id); return; }
+    // клип из выделенной группы — тянем всю группу (простой щелчок оставит выделенным только его)
+    if (!side && store.sels.length > 1 && store.isSel(id) && !f.track.locked && !(f.track.main && store.magnet)) {
+      this.startGroupMove(e, f);
+      return;
+    }
     store.select(id);
     if (f.track.locked) return; // заблокированная дорожка: только выделение
-    const side = e.target.classList.contains('clip-h') ? (e.target.classList.contains('l') ? 'l' : 'r') : null;
     if (side) this.startTrim(e, f.clip, f.track, side);
     else this.startMove(e, f.clip, f.track);
   },
@@ -741,6 +763,114 @@ const Timeline = {
     }, 'grabbing');
   },
 
+  // Выделение рамкой, как в CapCut: протянуть по пустому месту дорожек (Ctrl/Shift — добавить к выделению).
+  // Простой щелчок снимает выделение и ставит курсор. У края окна таймлайн прокручивается сам.
+  marquee(e) {
+    if (e.button !== 0) return;
+    if (Player.playing) Player.pause();
+    const add = e.ctrlKey || e.metaKey || e.shiftKey;
+    const base = add ? [...store.sels] : [];
+    if (!add) store.select(null);
+    const cr = () => this.canvasEl.getBoundingClientRect();
+    const r0 = cr(), x0 = e.clientX - r0.left, y0 = e.clientY - r0.top;
+    let box = null, last = e, raf = 0;
+    const update = () => {
+      const r = cr();
+      const x1 = last.clientX - r.left, y1 = last.clientY - r.top;
+      // не заходим под шапки дорожек и линейку (они прилипают к краям при прокрутке)
+      const lx = HEAD_W + this.scroll.scrollLeft, ty = 24 + this.scroll.scrollTop;
+      const L = Math.max(lx, Math.min(x0, x1)), R = Math.max(lx, x0, x1), T = Math.max(ty, Math.min(y0, y1)), B = Math.max(ty, y0, y1);
+      box.style.transform = `translate(${L}px, ${T}px)`;
+      box.style.width = (R - L) + 'px';
+      box.style.height = (B - T) + 'px';
+      const hit = [];
+      for (const t of store.p.tracks) {
+        const row = this.rows[t.id];
+        if (!row || t.locked) continue;
+        const rr = row.row.getBoundingClientRect();
+        if (rr.bottom - r.top < T || rr.top - r.top > B) continue;
+        for (const c of t.clips) {
+          const a = HEAD_W + c.start * this.pps, b = a + Math.max(3, clipDur(c) * this.pps);
+          if (b >= L && a <= R && R > L && B > T) hit.push(c.id);
+        }
+      }
+      store.selectMany([...base, ...hit], store.sel);
+    };
+    // прокрутка, пока курсор у края
+    const edge = () => {
+      raf = requestAnimationFrame(edge);
+      const sr = this.scroll.getBoundingClientRect(), z = 28;
+      const vx = last.clientX < sr.left + HEAD_W + z ? last.clientX - (sr.left + HEAD_W + z) : last.clientX > sr.right - z ? last.clientX - (sr.right - z) : 0;
+      const vy = last.clientY < sr.top + z ? last.clientY - (sr.top + z) : last.clientY > sr.bottom - z ? last.clientY - (sr.bottom - z) : 0;
+      if (!vx && !vy) return;
+      this.scroll.scrollLeft += clamp(vx, -40, 40) * 0.5;
+      this.scroll.scrollTop += clamp(vy, -40, 40) * 0.5;
+      update();
+    };
+    dragMove(e, (ev, dx, dy) => {
+      last = ev;
+      if (!box) {
+        if (Math.hypot(dx, dy) < 4) return;
+        box = h('<div class="tl-marquee"></div>');
+        this.canvasEl.appendChild(box);
+        raf = requestAnimationFrame(edge);
+      }
+      update();
+    }, (ev) => {
+      cancelAnimationFrame(raf);
+      if (box) { box.remove(); return; }
+      // щелчок без протягивания — курсор сюда (с привязкой, как на линейке)
+      let t = this.timeAt(ev.clientX);
+      if (store.snap && !ev.altKey) { const s = this.snapPoint(t, -1, 6 / this.pps, true); if (s != null) t = s; }
+      store.setTime(Math.round(t * store.p.fps) / store.p.fps);
+    });
+  },
+
+  // Перетаскивание выделенной группы: все клипы сдвигаются на одно и то же время, дорожки не меняются;
+  // клип, налезший на невыделенный, уходит на свободную дорожку того же типа (клипы главной дорожки
+  // с магнитом и заблокированные дорожки остаются на месте)
+  startGroupMove(e, f) {
+    const c = f.clip, len = clipDur(c), st0 = c.start;
+    const items = store.selectedAll().filter(x => !x.track.locked && !(x.track.main && store.magnet)).map(x => ({ ...x, st: x.clip.start }));
+    const ex = new Set(items.map(x => x.clip.id));
+    const minSt = Math.min(...items.map(x => x.st));
+    let moved = false;
+    dragMove(e, (ev, dx, dy) => {
+      if (!moved && Math.hypot(dx, dy) < 4) return;
+      moved = true;
+      let dt = Math.max(-minSt, dx / this.pps), snapped = null;
+      if (store.snap && !ev.altKey) {
+        const th = 8 / this.pps, s0 = st0 + dt;
+        const a = this.snapPoint(s0, ex, th), b = this.snapPoint(s0 + len, ex, th);
+        if (a != null && (b == null || Math.abs(a - s0) <= Math.abs(b - s0 - len))) { dt = a - st0; snapped = a; }
+        else if (b != null) { dt = b - len - st0; snapped = b; }
+        if (dt < -minSt) { dt = -minSt; snapped = null; }
+      }
+      for (const x of items) x.clip.start = x.st + dt;
+      this.showSnap(snapped);
+      this.render();
+      Player.requestRender();
+    }, () => {
+      this.showSnap(null);
+      if (!moved) { store.select(c.id); return; }
+      for (const x of items) {
+        const k = x.clip, tr = x.track;
+        const free = tr.clips.every(q => q === k || ex.has(q.id) || clipEnd(q) <= k.start + 1e-6 || q.start >= clipEnd(k) - 1e-6);
+        if (free) continue;
+        tr.clips.splice(tr.clips.indexOf(k), 1);
+        store.place(k, this.trackKindOf(k));
+      }
+      for (const t of store.p.tracks) t.clips.sort((a, b) => a.start - b.start);
+      store.packMain();
+      store.cleanupTracks();
+      store.commit('move');
+    }, 'grabbing');
+  },
+  selectAll() {
+    if (!store.p) return;
+    store.selectMany(store.allClips().filter(x => !x.track.locked).map(x => x.clip.id), store.sel);
+  },
+
   fits(track, c, start, len) {
     return track.clips.every(o => o === c || clipEnd(o) <= start + 1e-6 || o.start >= start + len - 1e-6);
   },
@@ -784,9 +914,28 @@ const Timeline = {
     const target = this.rowAt(e.clientY);
     return { target, t: Math.max(0, this.timeAt(e.clientX)) };
   },
+  // клип (видео или картинка) под курсором — цель для эффекта из панели
+  fxTargetAt(e) {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const ce = el && el.closest('.tl-lane .clip');
+    const f = ce && store.find(ce.dataset.id);
+    return f && (f.clip.kind === 'video' || f.clip.kind === 'image') && !f.track.locked ? { el: ce, c: f.clip } : null;
+  },
+  setFxTarget(el) {
+    if (this.fxTargetEl === el) return;
+    if (this.fxTargetEl) this.fxTargetEl.classList.remove('fx-target');
+    this.fxTargetEl = el;
+    if (el) el.classList.add('fx-target');
+  },
   onDragOver(e) {
     const types = e.dataTransfer.types;
-    if (!types.includes('application/x-lincut-media') && !types.includes('Files')) return;
+    if (types.includes('application/x-lincut-fx')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      const tg = this.fxTargetAt(e);
+      this.setFxTarget(tg ? tg.el : null);
+      if (tg) { this.insertLine.classList.add('hidden'); return; }
+    } else if (!types.includes('application/x-lincut-media') && !types.includes('Files')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     const { target, t } = this.dropPos(e);
@@ -804,13 +953,27 @@ const Timeline = {
     this.insertLine.style.transform = `translate(${HEAD_W + x * this.pps}px, ${top}px)`;
     this.insertLine.style.height = hh + 'px';
   },
-  clearDropHint() { this.insertLine.classList.add('hidden'); },
+  clearDropHint() { this.insertLine.classList.add('hidden'); this.setFxTarget(null); },
   async onDrop(e) {
     e.preventDefault();
     e.stopPropagation();
     this.clearDropHint();
     $('#dropHint').classList.add('hidden');
     const { target, t } = this.dropPos(e);
+    const fxId = e.dataTransfer.getData('application/x-lincut-fx');
+    if (fxId) {
+      // на клип — эффект клипа (как в Premiere Pro), мимо — эффект на дорожке эффектов
+      const tg = this.fxTargetAt(e);
+      if (tg) {
+        addClipFx(tg.c, fxId);
+        store.select(tg.c.id);
+        store.commit('fx-clip');
+        Inspector.showFx(tg.c);
+        toast(`Эффект «${EFFECT_BY_ID[fxId].name}» применён к клипу`, 'info', 1600);
+      } else Panels.addEffect(fxId, null, t);
+      Player.requestRender();
+      return;
+    }
     let medias = [];
     const mid = e.dataTransfer.getData('application/x-lincut-media');
     if (mid) { const m = store.media(mid); if (m) medias = [m]; }
@@ -904,12 +1067,22 @@ const Timeline = {
     store.commit('trim');
   },
   deleteSel() {
+    const list = store.selectedAll();
+    if (list.length > 1) {
+      const del = list.filter(x => !x.track.locked);
+      if (!del.length) return;
+      for (const x of del) store.removeClip(x.clip.id);
+      store.commit('delete');
+      return;
+    }
     const s = store.selected();
     if (!s) return;
     store.removeClip(s.clip.id);
     store.commit('delete');
   },
   duplicate() {
+    const list = store.selectedAll();
+    if (list.length > 1) return this.duplicateMany(list);
     const s = store.selected();
     if (!s) return;
     const c2 = deep(s.clip);
@@ -924,6 +1097,31 @@ const Timeline = {
       else store.place(c2, s.track.kind);
     }
     store.select(c2.id);
+    store.commit('duplicate');
+  },
+  // Дублирование группы: копии встают сразу за ней с тем же взаимным расположением
+  // (на главной дорожке с магнитом — следом за последним выделенным клипом)
+  duplicateMany(list) {
+    const a = Math.min(...list.map(x => x.clip.start)), b = Math.max(...list.map(x => clipEnd(x.clip)));
+    const ids = [];
+    const main = list.filter(x => x.track.main && store.magnet);
+    if (main.length) {
+      const mc = main[0].track.clips;
+      let i = Math.max(...main.map(x => mc.indexOf(x.clip))) + 1;
+      for (const x of main) { const c2 = deep(x.clip); c2.id = uid(); mc.splice(i++, 0, c2); ids.push(c2.id); }
+    }
+    for (const x of list) {
+      if (x.track.main && store.magnet) continue;
+      const c2 = deep(x.clip);
+      c2.id = uid();
+      c2.start = x.clip.start + (b - a);
+      if (this.fits(x.track, c2, c2.start, clipDur(c2))) x.track.clips.push(c2);
+      else store.place(c2, this.trackKindOf(c2));
+      ids.push(c2.id);
+    }
+    for (const t of store.p.tracks) t.clips.sort((p, q) => p.start - q.start);
+    store.packMain();
+    store.selectMany(ids);
     store.commit('duplicate');
   },
   detachAudio() {
@@ -1040,6 +1238,21 @@ const Timeline = {
   clipMenu(x, y) {
     const s = store.selected();
     if (!s) return;
+    const many = store.selectedAll();
+    if (many.length > 1) {
+      const allOff = many.every(f => f.clip.disabled);
+      showMenu(x, y, [
+        { label: `Выделено клипов: ${many.length}`, disabled: true },
+        '-',
+        { label: 'Копировать', icon: 'copy', key: 'Ctrl+C', onClick: () => App.copy() },
+        { label: 'Вырезать', key: 'Ctrl+X', onClick: () => { App.copy(); this.deleteSel(); } },
+        { label: 'Дублировать', icon: 'copy', key: 'Ctrl+D', onClick: () => this.duplicate() },
+        { label: allOff ? 'Включить клипы' : 'Отключить клипы', icon: 'prohibit', onClick: () => { for (const f of many) f.clip.disabled = !allOff; store.commit('disable'); } },
+        { label: 'Снять выделение', key: 'Esc', onClick: () => store.select(null) },
+        '-', { label: 'Удалить', icon: 'trash', key: 'Del', danger: true, onClick: () => this.deleteSel() },
+      ]);
+      return;
+    }
     const c = s.clip;
     const items = [
       { label: 'Разделить', icon: 'split', key: Edit.K('split'), disabled: !this.splitTarget(), onClick: () => this.split() },

@@ -206,10 +206,22 @@ const Exporter = {
       if (hasPost) graph.push(`[${post}_s]trim=start=${num(E)},setpts=PTS-STARTPTS,setsar=1[${post}]`);
       const headIdx = graph.length;
       graph.push(null); // заполним после сборки (нужен файл команд)
+      const { cur, startLabel, cmdHead } = await fxOps(ops, S, E, W, H, id);
+      graph[headIdx] = `[${b}]trim=start=${num(S)}:end=${num(E)}${await cmdHead()},format=gbrp[${startLabel}]`;
+      const fe = L('fe'), out = L('fo');
+      graph.push(`[${cur}]trim=end=${num(E)},format=yuv420p,setpts=PTS-STARTPTS,setsar=1[${fe}]`);
+      const segs = [hasPre && pre, fe, hasPost && post].filter(Boolean);
+      if (segs.length === 1) return fe;
+      graph.push(`${segs.map(x => `[${x}]`).join('')}concat=n=${segs.length}:v=1:a=0,setpts=N/(${fps}*TB)[${out}]`);
+      return out;
+    };
+    // Операции эффекта на кадрах w×h в окне [S, E]: вход — метка startLabel (gbrp), выход — cur.
+    // cmdHead() — «,sendcmd=…» для покадровых параметров (пусто, если их нет)
+    const fxOps = async (ops, S, E, w, h, id) => {
       const first = Math.ceil(S * fps - 1e-6) / fps;
       const cmds = [];
       const X = {
-        W, H, fps, S, E, D: E - S, u: H / 1080, id, first,
+        W: w, H: h, fps, S, E, D: E - S, u: h / 1080, id, first,
         // in у perspective считается с 1
         Tin: `((in-1)/${fps}+${num(first - S)})`, Tt: `(t-${num(S)})`, Tcmd: `(T-${num(S)})`,
         L, graph, input, num,
@@ -234,17 +246,32 @@ const Exporter = {
       const startLabel = L('fc');
       let cur = startLabel;
       for (const op of ops) cur = await FXEXP[op.type](op, cur, X);
-      let head = `[${b}]trim=start=${num(S)}:end=${num(E)}`;
-      if (cmds.length) {
-        const f = await window.api.writeTemp(`cmd_${id}.txt`, cmds.join('\n'));
-        head += `,sendcmd=f=${ffq(f)}`;
+      const cmdHead = async () => cmds.length ? `,sendcmd=f=${ffq(await window.api.writeTemp(`cmd_${id}.txt`, cmds.join('\n')))}` : '';
+      return { cur, startLabel, cmdHead };
+    };
+    // Эффекты на клипе (c.fx): слой w×h, кадры на сетке fps, прозрачность возвращается после эффектов (как applyClipFx)
+    const clipFxStep = async (inL, c, w, h) => {
+      const S = c.start, E = clipEnd(c);
+      const list = clipFxOps(c, w / h);
+      if (!list.length) return inL;
+      const alpha = clipHasAlpha(c);
+      let cur = L('xf'), al = null;
+      if (alpha) {
+        const a = L('xa'), b = L('xb');
+        al = L('xal');
+        graph.push(`[${inL}]fps=${fps},trim=start=${num(S)},format=rgba,split[${a}][${b}]`);
+        graph.push(`[${a}]alphaextract[${al}]`);
+        graph.push(`[${b}]premultiply=inplace=1[${cur}]`);
+      } else graph.push(`[${inL}]fps=${fps},trim=start=${num(S)}[${cur}]`);
+      for (const { ops } of list) {
+        const id = ++fxN;
+        const r = await fxOps(ops, S, E, w, h, id);
+        graph.push(`[${cur}]null${await r.cmdHead()},format=gbrp[${r.startLabel}]`);
+        cur = r.cur;
       }
-      graph[headIdx] = `${head},format=gbrp[${startLabel}]`;
-      const fe = L('fe'), out = L('fo');
-      graph.push(`[${cur}]trim=end=${num(E)},format=yuv420p,setpts=PTS-STARTPTS,setsar=1[${fe}]`);
-      const segs = [hasPre && pre, fe, hasPost && post].filter(Boolean);
-      if (segs.length === 1) return fe;
-      graph.push(`${segs.map(x => `[${x}]`).join('')}concat=n=${segs.length}:v=1:a=0,setpts=N/(${fps}*TB)[${out}]`);
+      if (!alpha) return cur;
+      const out = L('xo');
+      graph.push(`[${cur}]format=rgba[${cur}r];[${cur}r][${al}]alphamerge[${out}]`);
       return out;
     };
 
@@ -335,9 +362,12 @@ const Exporter = {
     // и покадрово раскладываем через perspective (позиция, масштаб, поворот), прозрачность — через sendcmd.
     // Размытие в движении: N копий слоя со сдвигом времени трансформации, среднее по premultiplied (как в превью)
     const keyedLayer = async (c, fx, blur) => {
-      const K = c.keys && c.keys.length ? c.keys : [{ s: c.in, ...baseTf(c) }];
+      // ключи со всеми свойствами (у старых проектов нет sx/sy/rx/ry)
+      const K = (c.keys && c.keys.length ? c.keys : [{ s: c.in, ...baseTf(c) }]).map(k => ({ s: k.s, ...keyPick(k) }));
       const s = c.start, e = clipEnd(c), d = e - s, id = ++kfN;
-      const sPre = clamp(Math.max(...K.map(k => k.scale)), 0.05, 4);
+      const sPre = clamp(Math.max(...K.map(k => k.scale * Math.max(k.sx, k.sy))), 0.05, 4);
+      const has3d = K.some(is3d);
+      let ow0, oh0;   // размер объекта при масштабе sPre, пиксели экспорта — для расстояния камеры
       const chain = [];
       let idx, lw, lh, head = null;
       const cmdName = `colorchannelmixer@kf${id}`;
@@ -348,6 +378,7 @@ const Exporter = {
       if (c.kind === 'text') {
         const ct = { ...c, keys: null, transform: { x: 0, y: 0, scale: sPre, rotation: 0 }, opacity: 1, blend: null };
         const L = textLayout(ct);
+        ow0 = L.w * sPre * kx; oh0 = L.h * sPre * ky;
         lw = Math.max(W, Math.ceil(L.w * sPre * kx) + 8); lh = Math.max(H, Math.ceil(L.h * sPre * ky) + 8);
         const cv = document.createElement('canvas'); cv.width = lw; cv.height = lh;
         const cx = cv.getContext('2d');
@@ -366,16 +397,18 @@ const Exporter = {
         if (cmdFile) chain.push(`sendcmd=f=${ffq(cmdFile)}`);
         const ms = mediaSize(c), f = Math.min(p.width / ms.w, p.height / ms.h) * sPre;
         const sw = Math.max(2, Math.round(ms.w * f * kx)), sh = Math.max(2, Math.round(ms.h * f * ky));
+        ow0 = ms.w * f * kx; oh0 = ms.h * f * ky;
         chain.push(`scale=${sw}:${sh}:flags=bicubic`, ...chromaFilters(c), 'format=gbrap');
         const lut = clipLUT(c);
         if (lut) chain.push(`lut3d=file=${ffq(await window.api.writeTemp('lut_' + c.id + '.cube', lut))}:interp=tetrahedral`);
         if (c.adjust && c.adjust.blur > 0) chain.push(`gblur=sigma=${num(c.adjust.blur / 100 * 30 * kx)}`);
         if (c.flipH) chain.push('hflip');
         if (c.flipV) chain.push('vflip');
-        if (masked(c)) {
+        if (masked(c) || clipFxOn(c)) {
           const pre = L('kp');
           graph.push(`[${idx}:v]${chain.join(',')}[${pre}]`);
-          head = await maskStep(pre, c, sw, sh, s, d);
+          head = masked(c) ? await maskStep(pre, c, sw, sh, s, d) : pre;
+          head = await clipFxStep(head, c, sw, sh);
           chain.length = 0;
           chain.push('format=gbrap');
         }
@@ -390,11 +423,26 @@ const Exporter = {
         // in у perspective считается с 1
         const T = `((in-1)/${fps}+${num(t0 + dt)})`;
         const sIn = srcExpr(c, `(${T}-${num(s)})`);
-        // время источника и параметры кадра считаются один раз в переменные выражения (st/ld)
-        const pre = `st(0,${sIn});${kfSt(K, 'x', 'ld(0)', kx, 1)}${kfSt(K, 'y', 'ld(0)', ky, 2)}${kfSt(K, 'rotation', 'ld(0)', Math.PI / 180, 3)}${kfSt(K, 'scale', 'ld(0)', 1 / sPre, 4)}`;
+        // время источника и параметры кадра считаются один раз в переменные выражения (st/ld):
+        // 1, 2 — центр, 3 — поворот, 4 — масштаб / sPre, 5, 6 — растяжение, 7, 8 — 3D-поворот, 9 — расстояние камеры
+        let pre = `st(0,${sIn});${kfSt(K, 'x', 'ld(0)', kx, 1)}${kfSt(K, 'y', 'ld(0)', ky, 2)}${kfSt(K, 'rotation', 'ld(0)', Math.PI / 180, 3)}${kfSt(K, 'scale', 'ld(0)', 1 / sPre, 4)}`
+          + `${kfSt(K, 'sx', 'ld(0)', 1, 5)}${kfSt(K, 'sy', 'ld(0)', 1, 6)}`;
+        if (has3d) pre += `${kfSt(K, 'rx', 'ld(0)', Math.PI / 180, 7)}${kfSt(K, 'ry', 'ld(0)', Math.PI / 180, 8)}`
+          + `st(9,max(${num(PERSP_K * Math.hypot(p.width, p.height) * kx)},0.75*hypot(${num(ow0)}*ld(4)*ld(5),${num(oh0)}*ld(4)*ld(6))));`;
         const ax = mv ? moveExpr(mx, kx, T) : '', ay = mv ? moveExpr(my, ky, T) : '';
-        const corners = [[-lw / 2, -lh / 2], [lw / 2, -lh / 2], [-lw / 2, lh / 2], [lw / 2, lh / 2]].map(([dx, dy], i) =>
-          `x${i}='${pre}${num(W / 2)}+ld(1)${ax}+((${dx})*cos(ld(3))-(${dy})*sin(ld(3)))*ld(4)':y${i}='${pre}${num(H / 2)}+ld(2)${ay}+((${dx})*sin(ld(3))+(${dy})*cos(ld(3)))*ld(4)'`).join(':');
+        // как proj3 в render.js
+        const corner = (dx, dy) => {
+          const A = `(${dx})*ld(4)*ld(5)`, B = `(${dy})*ld(4)*ld(6)`;
+          const u = `(${A}*cos(ld(3))-${B}*sin(ld(3)))`, v = `(${A}*sin(ld(3))+${B}*cos(ld(3)))`;
+          if (!has3d) return [u, v];
+          const z1 = `(-${v}*sin(ld(7)))`;
+          const w = `((ld(9)+${u}*sin(ld(8))+${z1}*cos(ld(8)))/ld(9))`;
+          return [`(${u}*cos(ld(8))-${z1}*sin(ld(8)))/${w}`, `${v}*cos(ld(7))/${w}`];
+        };
+        const corners = [[-lw / 2, -lh / 2], [lw / 2, -lh / 2], [-lw / 2, lh / 2], [lw / 2, lh / 2]].map(([dx, dy], i) => {
+          const [X, Y] = corner(dx, dy);
+          return `x${i}='${pre}${num(W / 2)}+ld(1)${ax}+${X}':y${i}='${pre}${num(H / 2)}+ld(2)${ay}+${Y}'`;
+        }).join(':');
         return `fps=${fps},perspective=${corners}:sense=destination:interpolation=linear:eval=frame,crop=${W}:${H}:0:0`;
       };
       const tail = [`${cmdName}=aa=${num(K[0].opacity)}`];
@@ -448,7 +496,8 @@ const Exporter = {
       const blur = mblurActive(c, tr);
       if (c.kind === 'text' && (blur || textAnimOn(c))) return canvasLayer(c, tr, s, e);
       const fx = clipFx(c, tr, p.width, p.height);
-      if ((c.keys && c.keys.length > 1) || blur) return keyedLayer(c, fx, blur);
+      // ключи, размытие в движении и 3D-поворот — покадрово через perspective
+      if ((c.keys && c.keys.length > 1) || blur || is3d(tfAt(c, s))) return keyedLayer(c, fx, blur);
       // без анимации ключами: берём постоянную трансформацию (или единственный ключ)
       const eff = tfAt(c, s);
       const cs = { ...c, keys: null, transform: { ...c.transform, ...eff }, opacity: eff.opacity };
@@ -478,10 +527,11 @@ const Exporter = {
         if (c.adjust && c.adjust.blur > 0) chain.push(`gblur=sigma=${num(c.adjust.blur / 100 * 30 * kx)}`);
         if (c.flipH) chain.push('hflip');
         if (c.flipV) chain.push('vflip');
-        if (masked(c)) {
+        if (masked(c) || clipFxOn(c)) {
           const pre = L('mp');
           graph.push(`[${idx}:v]${chain.join(',')}[${pre}]`);
-          head = await maskStep(pre, c, sw, sh, s, d);
+          head = masked(c) ? await maskStep(pre, c, sw, sh, s, d) : pre;
+          head = await clipFxStep(head, c, sw, sh);
           chain.length = 0;
           chain.push('format=rgba');
         }
