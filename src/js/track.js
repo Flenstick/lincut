@@ -86,7 +86,7 @@ const Track = {
       this.apply(c);
       store.commit('track');
       Player.requestRender();
-      toast(r.engine === 'csrt' && this.engine === 'sam2' ? 'Готово (нейросеть недоступна — использован быстрый трекер)' : 'Трекинг готов — объект найден на всём клипе', 'ok', 2600);
+      toast(r.engine === 'face' ? 'Трекинг готов — лицо найдено на всём клипе' : r.engine === 'csrt' && this.engine === 'sam2' ? 'Готово (нейросеть недоступна — использован быстрый трекер)' : 'Трекинг готов — объект найден на всём клипе', 'ok', 2600);
     } catch (e) {
       const msg = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
       if (msg !== 'Отменено') {

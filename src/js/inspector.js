@@ -293,14 +293,14 @@ const Inspector = {
       const grid = h(`<div class="track-modes">${modes.map(m => `<button class="chip-btn" data-m="${m}" data-tip="${esc(FOLLOW_MODES[m].hint)}">${icon(FOLLOW_MODES[m].icon)}${FOLLOW_MODES[m].name}</button>`).join('')}</div>`);
       grid.onclick = (e) => { const b = e.target.closest('button'); if (b) Track.start(c, b.dataset.m); };
       sec.appendChild(grid);
-      const eng = h(`<div class="prop-row"><label>Трекер</label><div class="seg"><button data-e="sam2" class="${Track.engine === 'sam2' ? 'on' : ''}">Точный</button><button data-e="csrt" class="${Track.engine === 'csrt' ? 'on' : ''}">Быстрый</button></div></div>`);
+      const eng = h(`<div class="prop-row"><label>Трекер</label><div class="seg"><button data-e="sam2" class="${Track.engine === 'sam2' ? 'on' : ''}">Точный</button><button data-e="face" class="${Track.engine === 'face' ? 'on' : ''}">Лицо</button><button data-e="csrt" class="${Track.engine === 'csrt' ? 'on' : ''}">Быстрый</button></div></div>`);
       eng.onclick = (e) => { const b = e.target.closest('button'); if (!b) return; Track.setEngine(b.dataset.e); $$('button', eng).forEach(x => x.classList.toggle('on', x === b)); };
       sec.appendChild(eng);
-      sec.appendChild(h(`<p class="muted small">${c.kind === 'video' ? 'Выберите режим и обведите объект рамкой в превью.' : 'Поставьте курсор над видео, нажмите «За объектом» и обведите объект рамкой — клип поедет за ним.'} «Точный» — нейросеть SAM 2, «Быстрый» — OpenCV.</p>`));
+      sec.appendChild(h(`<p class="muted small">${c.kind === 'video' ? 'Выберите режим и обведите объект рамкой в превью.' : 'Поставьте курсор над видео, нажмите «За объектом» и обведите объект рамкой — клип поедет за ним.'} «Точный» — нейросеть SAM 2 (если обвести лицо, сама включит «Лицо»), «Лицо» — детектор лиц, не слетает и не перескакивает на чужое лицо, «Быстрый» — OpenCV.</p>`));
       return;
     }
     const d = Track.data(c);
-    sec.appendChild(h(`<div class="vs-state ok">${icon('check')}<span>${FOLLOW_MODES[f.mode].name} · ${d ? (d.engine === 'sam2' ? 'нейросеть' : 'быстрый трекер') : ''} · кадров: ${d ? d.pts.length : 0}</span></div>`));
+    sec.appendChild(h(`<div class="vs-state ok">${icon('check')}<span>${FOLLOW_MODES[f.mode].name} · ${d ? ({ sam2: 'нейросеть', face: 'лицо' }[d.engine] || 'быстрый трекер') : ''} · кадров: ${d ? d.pts.length : 0}</span></div>`));
     const re = () => { Track.apply(c); Player.requestRender(); Timeline.render(); };
     sec.appendChild(sliderRow({ label: 'Сглаживание', min: 0, max: 100, value: f.smooth, def: 35, fmt: v => Math.round(v), onInput: v => { f.smooth = v; re(); }, onCommit: () => store.commit('track-smooth') }));
     if (f.mode === 'camera') sec.appendChild(sliderRow({ label: 'Приближение', min: 100, max: 300, value: f.zoom * 100, def: 150, unit: '%', fmt: v => Math.round(v), onInput: v => { f.zoom = v / 100; re(); }, onCommit: () => store.commit('track-zoom') }));
