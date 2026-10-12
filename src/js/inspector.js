@@ -265,6 +265,7 @@ const Inspector = {
     };
     sec.appendChild(row);
     this.trackSection(body, c);
+    if (TextEdit.canUse(c)) this.textEditSection(body, c);
     this.blendSection(body, c);
     if (Stab.canUse(c)) this.stabSection(body, c);
     this.chromaSection(body, c);
@@ -275,6 +276,15 @@ const Inspector = {
       fs.appendChild(sliderRow({ label: 'Сила', min: 0, max: 100, value: c.filter.intensity, def: 100, fmt: v => Math.round(v),
         onInput: v => { c.filter.intensity = v; Player.requestRender(); }, onCommit: () => store.commit('filter') }));
     }
+  },
+
+  // Замена текста на кадре (textedit.js)
+  textEditSection(body, c) {
+    const sec = this.section(body, 'Текст на кадре');
+    const row = h(`<div class="btn-grid"><button class="chip-btn ${TextEdit.replaced(c) ? '' : 'span2'}" data-a="edit">${icon('type')}Заменить текст…</button>${TextEdit.replaced(c) ? `<button class="chip-btn" data-a="undo">${icon('undo')}Вернуть исходный</button>` : ''}</div>`);
+    row.onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.a === 'edit') TextEdit.open(c); else TextEdit.restore(c); };
+    sec.appendChild(row);
+    sec.appendChild(h(`<p class="muted small">Нейросеть найдёт текст на кадре под курсором, сотрёт его и подберёт тот же шрифт, цвет и размер — останется вписать новый.</p>`));
   },
 
   // Трекинг: клип следует за объектом, камера следит за объектом или «захват»

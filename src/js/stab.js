@@ -32,6 +32,9 @@ const Stab = {
   pendingClips() { return store.allClips().map(x => x.clip).filter(c => this.on(c) && !this.fileFor(c)); },
   // картинка клипа: { path, a } — файл и время источника, с которого он начинается; null — исходник
   altVideo(c) {
+    // видео со стёртым текстом (textedit.js) сделано уже из стабилизированного, если стабилизация была
+    const te = TextEdit.altVideo(c);
+    if (te) return te;
     const st = this.fileFor(c);
     return st ? { path: store.dir + '/stab/' + st.file, a: st.a } : null;
   },

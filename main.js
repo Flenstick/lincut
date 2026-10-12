@@ -824,6 +824,9 @@ const TRK_SCRIPT = path.join(__dirname, 'tools', 'track.py');
 const TRK_CKPT = 'sam2.1_hiera_small.pt';
 const TRK_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/' + TRK_CKPT;
 let trkChain = Promise.resolve(), trkProc = null, trkCanceled = false;
+const TXE_SCRIPT = path.join(__dirname, 'tools', 'textedit.py');
+const TXE_LAMA = 'big-lama.pt';
+const TXE_LAMA_URL = 'https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt';
 const trkSend = (msg) => { if (win) win.webContents.send('trk:progress', msg); };
 // ---------------------------------------------------------------- установка нейросетей
 // Одной кнопкой («Файл → Нейросети → Загрузить все») или при первом использовании функции:
@@ -835,6 +838,13 @@ const trkSend = (msg) => { if (win) win.webContents.send('trk:progress', msg); }
 const AI_PARTS = {
   voice: { pkgs: ['audio-separator[gpu]', 'audioread'], mods: ['audio_separator'], models: [{ file: SEP_MODEL, size: 639362000, name: 'BS-Roformer' }] },
   track: { pkgs: ['sam2', 'opencv-contrib-python-headless'], mods: ['sam2', 'cv2'], models: [{ file: TRK_CKPT, size: 184416285, url: TRK_URL, name: 'SAM 2' }] },
+  // замена текста: EasyOCR ставится без зависимостей — иначе тянет opencv-python-headless поверх opencv-contrib (оба — модуль cv2)
+  text: {
+    pkgs: ['torch', 'torchvision', 'opencv-contrib-python-headless', 'scikit-image', 'python-bidi', 'pyclipper', 'shapely', 'pyyaml', 'fonttools', 'scipy', 'pillow'],
+    nodeps: ['easyocr'], mods: ['easyocr', 'fontTools', 'skimage', 'cv2'],
+    models: [{ file: TXE_LAMA, size: 205669692, url: TXE_LAMA_URL, name: 'LaMa' },
+      { file: 'easyocr/cyrillic_g2.pth', size: 98408853, fetch: true, name: 'EasyOCR' }],
+  },
 };
 const pyHas = (mods) => new Promise((resolve) => {
   if (!fs.existsSync(SEP_PY)) return resolve(false);
@@ -887,10 +897,10 @@ async function aiInstall(parts) {
   const halt = () => { if (st.canceled) { const e = new Error('Отменено'); e.canceled = true; throw e; } };
   fs.mkdirSync(SEP_MODELS, { recursive: true });
   // что именно нужно: пакеты ставим одним списком (одно разрешение зависимостей), модели — по одной
-  const env0 = fs.existsSync(SEP_PY), pkgs = [], models = [];
+  const env0 = fs.existsSync(SEP_PY), pkgs = [], nodeps = [], models = [];
   for (const k of parts) {
     const P = AI_PARTS[k];
-    if (!env0 || !(await pyHas(P.mods))) pkgs.push(...P.pkgs);
+    if (!env0 || !(await pyHas(P.mods))) { pkgs.push(...P.pkgs); nodeps.push(...(P.nodeps || [])); }
     for (const m of P.models) if (!modelHas(m)) models.push(m);
   }
   // pr: done — байты законченных шагов, cur/curTotal — текущий шаг, rest — ещё не начатые модели
@@ -929,6 +939,7 @@ async function aiInstall(parts) {
           if (got >= pr.curTotal) pr.text = 'Установка библиотек…';
         } else if (/^\s*Prepared\s/.test(l)) pr.text = 'Установка библиотек…';
       }, penv);
+      if (nodeps.length) await spawnLines('uv', ['pip', 'install', '--python', SEP_PY, '--no-deps', ...nodeps], null, penv);
       pr.known = true;
       finish(); halt();
     }
@@ -950,6 +961,9 @@ async function aiInstall(parts) {
           await new Promise((res, rej) => out.end((e) => e ? rej(e) : res()));
         } catch (e) { out.destroy(); fs.rmSync(tmp, { force: true }); throw st.canceled ? Object.assign(new Error('Отменено'), { canceled: true }) : e; }
         fs.renameSync(tmp, dst);
+      } else if (m.fetch) {
+        // модели EasyOCR качает сама библиотека — байты видит прокси
+        await spawnLines(SEP_PY, [TXE_SCRIPT, 'fetch', '--models', SEP_MODELS], null, penv);
       } else {
         // BS-Roformer качает сам audio-separator (модель + её настройки) — байты видит прокси
         await spawnLines(SEP_PY, [SEP_SCRIPT, '-', SEP_MODELS, '--models', SEP_MODELS, '--model', m.file, '--download-only'], (l) => {
@@ -1020,6 +1034,47 @@ ipcMain.handle('trk:run', (e, job) => remoteOn() ? (trkChain = trkChain.catch(()
     try { resolve(JSON.parse(fs.readFileSync(out, 'utf8'))); } catch (x) { reject(x); } finally { fs.rmSync(out, { force: true }); }
   });
 }))));
+// ---------------------------------------------------------------- замена текста на кадре (tools/textedit.py)
+// job = { name, cmd: analyze|erase|video, image?, video?, t?, a?, b?, t0?, fps?, quads?, out? } → JSON анализа / траектория
+let txeProc = null, txeCanceled = false;
+const txeSend = (msg) => { if (win) win.webContents.send('txe:progress', msg); };
+ipcMain.handle('txe:status', async () => ({ env: fs.existsSync(SEP_PY), ready: (await pyHas(AI_PARTS.text.mods)) && AI_PARTS.text.models.every(modelHas) }));
+ipcMain.handle('txe:run', (e, job) => new Promise((resolve, reject) => {
+  txeCanceled = false;
+  const tmp = path.join(os.tmpdir(), `lincut-txe-${process.pid}-${job.name}`);
+  const args = [TXE_SCRIPT, job.cmd];
+  if (job.cmd === 'video') args.push(job.video, '--a', String(job.a), '--b', String(job.b), '--t0', String(job.t0), '--fps', String(job.fps || 30), '--track', tmp + '.track.json');
+  else if (job.video) args.push('--video', job.video, '--t', String(job.t || 0));
+  else args.push('--image', job.image);
+  if (job.quads) { fs.writeFileSync(tmp + '.blocks.json', JSON.stringify(job.quads)); args.push('--blocks', tmp + '.blocks.json'); }
+  if (job.out) fs.mkdirSync(path.dirname(job.out), { recursive: true });
+  const out = job.out || tmp + '.json';
+  args.push('--out', out, '--models', SEP_MODELS);
+  if (job.cmd === 'analyze' && job.video) args.push('--frame-out', tmp + '.png');
+  const p = txeProc = spawn(SEP_PY, args, { env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONUTF8: '1' }, windowsHide: true });
+  let err = '', buf = '';
+  txeSend({ name: job.name, p: 0 });
+  p.stdout.on('data', (d) => {
+    buf += d.toString();
+    const lines = buf.split('\n'); buf = lines.pop();
+    for (const l of lines) { const m = /^PROGRESS ([\d.]+)/.exec(l); if (m) txeSend({ name: job.name, p: Number(m[1]) }); }
+  });
+  p.stderr.on('data', (d) => { err += d.toString(); if (err.length > 20000) err = err.slice(-20000); });
+  p.on('error', reject);
+  p.on('close', (code) => {
+    txeProc = null;
+    const clean = () => { for (const f of ['.blocks.json', '.json', '.track.json']) fs.rmSync(tmp + f, { force: true }); };
+    if (txeCanceled) { clean(); if (job.out) fs.rmSync(job.out, { force: true }); return reject(new Error('Отменено')); }
+    if (code !== 0 || !fs.existsSync(out)) { clean(); return reject(new Error(err.trim().split('\n').filter(l => !/Warning|warn\(|warnings\./.test(l)).slice(-6).join('\n') || 'Ошибка обработки')); }
+    try {
+      if (job.cmd === 'analyze') { const r = JSON.parse(fs.readFileSync(out, 'utf8')); if (job.video) r.frame = tmp + '.png'; resolve(r); }
+      else if (job.cmd === 'video') resolve(JSON.parse(fs.readFileSync(tmp + '.track.json', 'utf8')));
+      else resolve(true);
+    } catch (x) { reject(x); } finally { clean(); }
+  });
+}));
+ipcMain.handle('txe:cancel', () => { txeCanceled = true; if (txeProc) txeProc.kill('SIGTERM'); });
+
 ipcMain.handle('trk:cancel', () => { aiCancel('trk'); trkCanceled = true; if (trkProc) trkProc.kill('SIGTERM'); });
 
 // ---------------------------------------------------------------- ротоскоп (Roto Brush, SAM 2)

@@ -75,6 +75,7 @@ const AiServer = {
 const AI_PARTS_UI = {
   voice: { name: 'Голос и фон', model: 'BS-Roformer', icon: 'userSound', hint: 'Удалить голос / оставить только голос' },
   track: { name: 'Трекинг и «Вырезать объект»', model: 'SAM 2', icon: 'track', hint: 'Слежение за объектом, Roto Brush' },
+  text: { name: 'Замена текста на кадре', model: 'EasyOCR + LaMa', icon: 'type', hint: 'Найти текст, стереть и вписать новый тем же шрифтом' },
 };
 const AiModels = {
   prog: null,       // последнее сообщение о загрузке (null — не идёт)

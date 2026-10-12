@@ -13,6 +13,7 @@ const App = {
     VoiceFx.init();
     Stab.init();
     Track.init();
+    TextEdit.init();
     Roto.init();
     Links.init();
     AiServer.init();
