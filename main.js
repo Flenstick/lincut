@@ -1046,6 +1046,7 @@ ipcMain.handle('txe:run', (e, job) => new Promise((resolve, reject) => {
   if (job.cmd === 'video') args.push(job.video, '--a', String(job.a), '--b', String(job.b), '--t0', String(job.t0), '--fps', String(job.fps || 30), '--track', tmp + '.track.json');
   else if (job.video) args.push('--video', job.video, '--t', String(job.t || 0));
   else args.push('--image', job.image);
+  if (job.region) args.push('--region', ...job.region.map(String));
   if (job.quads) { fs.writeFileSync(tmp + '.blocks.json', JSON.stringify(job.quads)); args.push('--blocks', tmp + '.blocks.json'); }
   if (job.out) fs.mkdirSync(path.dirname(job.out), { recursive: true });
   const out = job.out || tmp + '.json';

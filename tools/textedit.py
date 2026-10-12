@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Замена текста на картинке и в видео для LinCut.
 
-textedit.py analyze --image IMG | --video VIDEO --t T  --models DIR --out OUT.json [--frame-out PNG]
+textedit.py analyze --image IMG | --video VIDEO --t T  --models DIR --out OUT.json [--frame-out PNG] [--region X Y W H]
     Находит строки текста (EasyOCR, русский + английский), для каждой — текст, цвет, размер и самый похожий
     шрифт из установленных в системе (рендер строки каждым шрифтом и сравнение с кадром).
 textedit.py erase --image IMG --blocks BLOCKS.json --models DIR --out OUT.png
@@ -20,6 +20,7 @@ import cv2
 
 
 LAMA = 'big-lama.pt'
+PUNCT = '.,:;!?…"\'«»()[]-—–'
 JUNK = ('Nerd Font', 'Symbols', 'Emoji', 'icomoon', 'FontAwesome', 'Material', 'Misc', 'cursor', 'Fangsong', 'OpenSymbol', 'Dingbat', 'Webdings', 'Wingdings')
 STYLES = {'regular': (False, False), 'book': (False, False), 'normal': (False, False), 'roman': (False, False), 'medium': None,
           'bold': (True, False), 'italic': (False, True), 'oblique': (False, True), 'bold italic': (True, True), 'bold oblique': (True, True)}
@@ -38,16 +39,75 @@ def device():
 
 
 # ---------------------------------------------------------------- распознавание
-def ocr(img, models):
+def ocr(img, models, region=None):
+    """Строки текста. region (доли кадра x, y, w, h) — только то, что обвели: полоса кадра читается по словам,
+    берутся слова, которые заметно попали в рамку (рамка «на глаз» не режет слово пополам), и склеиваются по строкам."""
     import easyocr
     d = os.path.join(models, 'easyocr')
     os.makedirs(d, exist_ok=True)
     rd = easyocr.Reader(['ru', 'en'], gpu=device() == 'cuda', model_storage_directory=d, user_network_directory=d, verbose=False)
-    out = []
-    for quad, text, conf in rd.readtext(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), width_ths=0.6, decoder='greedy'):
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    if not region:
+        out = []
+        for quad, text, conf in rd.readtext(rgb, width_ths=0.6, decoder='greedy'):
+            text = text.strip()
+            if text and conf > 0.15:
+                out.append((np.array(quad, dtype=np.float32), text, float(conf)))
+        return out
+    H, W = img.shape[:2]
+    rx0, ry0 = region[0] * W, region[1] * H
+    rx1, ry1 = rx0 + region[2] * W, ry0 + region[3] * H
+    ph = max(8, 0.5 * (ry1 - ry0))
+    y0, y1 = int(max(0, ry0 - ph)), int(min(H, ry1 + ph))
+    band = rgb[y0:y1]
+    k = min(4.0, max(1.0, 160 / max(1, y1 - y0)))
+    if k > 1:
+        band = cv2.resize(band, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC)
+    words = []
+    for quad, text, conf in rd.readtext(band, width_ths=0.15, decoder='greedy'):
         text = text.strip()
-        if text and conf > 0.15:
-            out.append((np.array(quad, dtype=np.float32), text, float(conf)))
+        if not text or conf < 0.15:
+            continue
+        q = np.array(quad, dtype=np.float32) / k + np.array([0, y0], dtype=np.float32)
+        qx0, qy0 = q.min(axis=0)
+        qx1, qy1 = q.max(axis=0)
+        ix = max(0.0, min(qx1, rx1) - max(qx0, rx0))
+        iy = max(0.0, min(qy1, ry1) - max(qy0, ry0))
+        # запятая или точка, прочитанная как отдельное «слово» («7», «.») — не слово; сотрётся вместе со строкой
+        if len(text) == 1 and not text.isalpha() and (conf < 0.6 or (qx1 - qx0) < 0.45 * (qy1 - qy0)):
+            continue
+        # рамка «на глаз»: слово берём, если она накрыла хотя бы четверть его ширины и треть высоты
+        if ix >= 0.25 * (qx1 - qx0) and iy >= 0.3 * (qy1 - qy0):
+            words.append([qx0, qy0, qx1, qy1, text, conf])
+    # слова одной строки — в один блок
+    words.sort(key=lambda w: ((w[1] + w[3]) / 2, w[0]))
+    lines = []
+    for w in words:
+        cy, h = (w[1] + w[3]) / 2, w[3] - w[1]
+        for L in lines:
+            if abs(cy - (L[1] + L[3]) / 2) < 0.5 * max(h, L[3] - L[1]):
+                L.append(w)
+                L[0], L[1], L[2], L[3] = min(L[0], w[0]), min(L[1], w[1]), max(L[2], w[2]), max(L[3], w[3])
+                break
+        else:
+            lines.append([w[0], w[1], w[2], w[3], w])
+    # строка целиком — текст из чтения строками: оно не путает запятые с цифрами
+    whole = []
+    if lines:
+        for quad, text, conf in rd.readtext(band, width_ths=0.6, decoder='greedy'):
+            q = np.array(quad, dtype=np.float32) / k + np.array([0, y0], dtype=np.float32)
+            whole.append((q.min(axis=0), q.max(axis=0), text.strip()))
+    out = []
+    for L in lines:
+        ws = sorted(L[4:], key=lambda w: w[0])
+        x0, ya, x1, yb = L[0], L[1], L[2], L[3]
+        text = ' '.join(w[4] for w in ws)
+        for (a0, a1, t) in whole:
+            ix = max(0.0, min(a1[0], x1) - max(a0[0], x0))
+            if t and ix > 0.85 * max(a1[0] - a0[0], x1 - x0) and abs((a0[1] + a1[1]) / 2 - (ya + yb) / 2) < 0.5 * (yb - ya):
+                text = t
+        q = np.array([[x0, ya], [x1, ya], [x1, yb], [x0, yb]], dtype=np.float32)
+        out.append((q, text, float(min(w[5] for w in ws))))
     return out
 
 
@@ -227,12 +287,87 @@ def match_font(fonts, text, ink):
     return scored
 
 
+def trim_marks(mask, text):
+    """Рамка слова часто захватывает соседнюю запятую или точку, которых нет в тексте, — они портят сравнение
+    шрифтов. Мелкие пятна у самого края, если текст с этой стороны кончается буквой или цифрой, убираем."""
+    n, lab, st, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
+    if n <= 2:
+        return mask
+    areas = st[1:, cv2.CC_STAT_AREA]
+    big = np.median(areas[areas >= np.percentile(areas, 50)])
+    keep = np.ones(n, bool)
+    left = [st[i, cv2.CC_STAT_LEFT] for i in range(1, n)]
+    right = [st[i, cv2.CC_STAT_LEFT] + st[i, cv2.CC_STAT_WIDTH] for i in range(1, n)]
+    t = text.strip()
+    if t and t[-1].isalnum():
+        i = int(np.argmax(right)) + 1
+        if st[i, cv2.CC_STAT_AREA] < 0.2 * big:
+            keep[i] = False
+    if t and t[0].isalnum():
+        i = int(np.argmin(left)) + 1
+        if st[i, cv2.CC_STAT_AREA] < 0.2 * big:
+            keep[i] = False
+    return keep[lab] & mask
+
+
+def word_part(ink, text):
+    """(слово, его чернила): строка делится на слова по пробелам между буквами; берётся самое длинное слово
+    без знаков по краям. Не делится так же, как текст, — вся строка."""
+    words = text.split()
+    clean = [w.strip(PUNCT) for w in words]
+    if len(words) < 2 and clean and clean[0] == words[0]:
+        return text, ink
+    # куски чернил и промежутки между ними; пробел — промежуток заметно шире обычного между буквами
+    cols = ink.any(axis=0)
+    runs, x = [], 0
+    while x < len(cols):
+        e = x
+        while e < len(cols) and cols[e] == cols[x]:
+            e += 1
+        runs.append((bool(cols[x]), x, e))
+        x = e
+    gaps = [e - b for on, b, e in runs[1:-1] if not on]
+    if not gaps:
+        return text, ink
+    thr = max(0.25 * ink.shape[0], 3 * float(np.median(gaps)))
+    segs, start = [], None
+    for on, b, e in runs:
+        if on and start is None:
+            start = b
+        if on:
+            end = e
+        elif start is not None and e - b > thr and e < len(cols):
+            segs.append((start, end))
+            start = None
+    if start is not None:
+        segs.append((start, end))
+    if len(segs) != len(words):
+        return text, ink
+    i = max(range(len(words)), key=lambda k: len(clean[k]))
+    if len(clean[i]) < 2:
+        return text, ink
+    a, b = segs[i]
+    # знак препинания на краю слова в тексте — отрезаем крайний кусок чернил (OCR мог прочитать «!» как «:»)
+    inner = [(on, x0, x1) for on, x0, x1 in runs if on and x0 >= a and x1 <= b]
+    if len(inner) > 2 and words[i][-1] in PUNCT:
+        b = inner[-2][2]
+    if len(inner) > 2 and words[i][0] in PUNCT:
+        a = inner[1][1]
+    part = trim_marks(ink[:, a:b], clean[i])
+    ys, xs = np.nonzero(part)
+    if len(xs) < 6:
+        return text, ink
+    return clean[i], part[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+
+
 def analyze_block(img, quad, text, fonts):
     crop, M, angle, inner = straighten(img, quad, 0.3)
     mask = text_mask(crop, inner)
     ys, xs = np.nonzero(mask)
     if len(xs) < 6:
         return None
+    mask = trim_marks(mask, text)
+    ys, xs = np.nonzero(mask)
     x0, x1, y0, y1 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
     ink = mask[y0:y1, x0:x1]
     # цвет: середина букв (без сглаженных краёв)
@@ -240,24 +375,32 @@ def analyze_block(img, quad, text, fonts):
     px = crop[core] if core.sum() > 20 else crop[mask]
     bgr = np.median(px, axis=0)
     color = '#%02x%02x%02x' % (int(bgr[2]), int(bgr[1]), int(bgr[0]))
-    # EasyOCR путает регистр («ПОдпишись») — сравниваем и варианты регистра, лучший заодно и подсказка текста
+    # шрифт — по самому длинному слову без знаков препинания: OCR часто путает «!», «,» и «:», а лишний знак
+    # портит сравнение. EasyOCR путает и регистр («ПОдпишись») — сравниваем варианты, лучший идёт и в текст
+    word, wink = word_part(mask[y0:y1, x0:x1], text)
+    cases = {'as': lambda t: t, 'up': str.upper, 'low': str.lower, 'cap': lambda t: t[:1].upper() + t[1:].lower()}
     best = None
-    for v in dict.fromkeys([text, text.upper(), text.lower(), text[:1].upper() + text[1:].lower()]):
-        sc = match_font(fonts, v, ink)
+    for name, f in cases.items():
+        sc = match_font(fonts, f(word), wink)
         if sc and (best is None or sc[0][0] > best[1][0][0] + 0.02):
-            best = (v, sc)
-    text, scored = best if best else (text, [])
+            best = (name, sc)
+    scored = best[1] if best else []
+    if best and best[0] != 'as':
+        text = cases[best[0]](text) if best[0] != 'cap' else ' '.join(cases['cap'](w) for w in text.split(' '))
     font = scored[0][1] if scored else None
     size, spacing, cx, cy = (y1 - y0) * 1.4, 0.0, (x0 + x1) / 2, (y0 + y1) / 2
     if font:
         r = render(font, text)
-        if r:
+        # размер и интервал — по тому же слову, по которому выбран шрифт (знаки, прочитанные неверно, не мешают)
+        wr = render(font, cases[best[0]](word)) if best else None
+        if r and wr:
             _, w64, h64, adv64, icx, icy = r
-            size = 64 * (y1 - y0) / max(1, h64)
+            ww64, wh64 = wr[1], wr[2]
+            size = 64 * wink.shape[0] / max(1, wh64)
             k = size / 64
-            n = len(text)
+            n = len(word)
             if n > 1:
-                spacing = max(-0.25 * size, min(0.4 * size, ((x1 - x0) - w64 * k) / (n - 1)))
+                spacing = max(-0.25 * size, min(0.4 * size, (wink.shape[1] - ww64 * k) / (n - 1)))
             # центр строки LinCut = центр чернил − смещение чернил от центра строки
             cx = (x0 + x1) / 2 - icx * k
             cy = (y0 + y1) / 2 - icy * k
@@ -373,7 +516,7 @@ def cmd_analyze(o):
         cv2.imencode('.png', img)[1].tofile(o.frame_out)
     H, W = img.shape[:2]
     progress(0.05)
-    found = ocr(img, o.models)
+    found = ocr(img, o.models, o.region)
     progress(0.5)
     fonts = font_list(o.models)
     progress(0.6)
@@ -492,6 +635,7 @@ def main():
     ap.add_argument('video', nargs='?')
     ap.add_argument('--video', dest='video_opt')
     ap.add_argument('--image')
+    ap.add_argument('--region', type=float, nargs=4, help='искать текст только в рамке (доли кадра x y w h)')
     ap.add_argument('--t', type=float, default=0)
     ap.add_argument('--a', type=float, default=0)
     ap.add_argument('--b', type=float, default=0)

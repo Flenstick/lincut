@@ -551,9 +551,10 @@ const Player = {
   },
 
   // ---------------------------------------------------------------- рамка вокруг объекта (трекинг)
-  startBoxPick(V, onBox) {
+  // opts.what — что обводить («объект», «текст»), opts.whole — подпись кнопки «без рамки» (onBox(null))
+  startBoxPick(V, onBox, opts = {}) {
     this.stopPick(); this.stopBoxPick();
-    const stage = this.stage, B = this.boxPick = { V, r: null };
+    const stage = this.stage, B = this.boxPick = { V, r: null, what: opts.what || 'объект' };
     const down = (e) => {
       e.stopPropagation(); e.preventDefault();
       if (e.button !== 0) { this.stopBoxPick(); return; }
@@ -563,7 +564,7 @@ const Player = {
         const r = B.r;
         this.stopBoxPick();
         const box = Math.abs(r[2] - r[0]) > 6 && Math.abs(r[3] - r[1]) > 6 ? this.boxToSource(V, r) : null;
-        if (box) onBox(box); else toast('Обведите объект рамкой побольше', 'info');
+        if (box) onBox(box); else toast(`Обведите ${B.what} рамкой побольше`, 'info');
       }, 'crosshair');
     };
     const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); this.stopBoxPick(); } };
@@ -572,9 +573,16 @@ const Player = {
     cancel.addEventListener('mousedown', (e) => e.stopPropagation(), true);
     cancel.onclick = (e) => { e.stopPropagation(); this.stopBoxPick(); };
     stage.appendChild(cancel);
+    let whole = null;
+    if (opts.whole) {
+      whole = h(`<button class="chip-btn box-pick-cancel box-pick-whole">${icon('maximize')}${esc(opts.whole)}</button>`);
+      whole.addEventListener('mousedown', (e) => e.stopPropagation(), true);
+      whole.onclick = (e) => { e.stopPropagation(); this.stopBoxPick(); onBox(null); };
+      stage.appendChild(whole);
+    }
     stage.addEventListener('mousedown', down, true);
     document.addEventListener('keydown', key, true);
-    B.off = () => { cancel.remove(); stage.removeEventListener('mousedown', down, true); document.removeEventListener('keydown', key, true); this.ov.style.cursor = ''; };
+    B.off = () => { cancel.remove(); if (whole) whole.remove(); stage.removeEventListener('mousedown', down, true); document.removeEventListener('keydown', key, true); this.ov.style.cursor = ''; };
     this.ov.style.cursor = 'crosshair';
     this.requestRender();
   },
@@ -609,8 +617,9 @@ const Player = {
     }
     // подсказка: полная, а в маленьком превью — короткая
     o.font = `600 ${12 * dpr}px "Golos Text", "Adwaita Sans", sans-serif`;
-    const txt = ['Обведите объект рамкой · Esc или правая кнопка — отмена', 'Обведите объект рамкой · Esc — отмена', 'Обведите объект']
-      .find(x => o.measureText(x).width + 32 * dpr <= fw) || 'Обведите объект';
+    const w = `Обведите ${B.what}`;
+    const txt = [`${w} рамкой · Esc или правая кнопка — отмена`, `${w} рамкой · Esc — отмена`, w]
+      .find(x => o.measureText(x).width + 32 * dpr <= fw) || w;
     const tw = o.measureText(txt).width + 20 * dpr;
     o.fillStyle = 'rgba(0,0,0,.8)'; roundRect(o, (fw - tw) / 2, 12 * dpr, tw, 26 * dpr, 6 * dpr); o.fill();
     o.fillStyle = '#fff'; o.textBaseline = 'middle'; o.textAlign = 'center'; o.fillText(txt, fw / 2, 25 * dpr); o.textAlign = 'left';

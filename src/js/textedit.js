@@ -77,26 +77,36 @@ const TextEdit = {
     if (store.time < c.start || store.time >= clipEnd(c)) store.setTime(clamp(store.time, c.start, clipEnd(c) - 0.05));
     const m = store.media(c.mediaId);
     if (!m) return;
+    // сначала рамка вокруг нужного текста в превью — ищем только внутри неё («Весь кадр» — всё подряд)
+    Player.startBoxPick(c, (box) => this.find(c, box), { what: 'текст', whole: 'Весь кадр' });
+  },
+
+  async find(c, region) {
+    const m = store.media(c.mediaId);
+    if (!m) return;
     const proj = store.p, T = store.time, isV = c.kind === 'video';
     // уже стёртое (повторная замена) или стабилизированное видео — ищем на нём
     const alt = isV ? Stab.altVideo(c) : null;
     const src = alt ? { path: alt.path, off: alt.a } : { path: m.path, off: 0 };
     const ts = isV ? srcAt(c, T - c.start) : 0;
-    const r = await this.run(isV ? { cmd: 'analyze', video: src.path, t: ts - src.off, clipId: c.id } : { cmd: 'analyze', image: m.path, clipId: c.id },
-      'Поиск текста', 'Ищем текст на кадре и подбираем шрифт…');
+    const job = isV ? { cmd: 'analyze', video: src.path, t: ts - src.off, clipId: c.id } : { cmd: 'analyze', image: m.path, clipId: c.id };
+    if (region) job.region = region;
+    const r = await this.run(job, 'Поиск текста', region ? 'Читаем выделенный текст и подбираем шрифт…' : 'Ищем текст на кадре и подбираем шрифт…');
     if (!r || store.p !== proj) return;
-    if (!r.blocks.length) { toast('На кадре не нашлось текста', 'info', 2600); return; }
-    this.editor(c, { T, ts, src, frame: isV ? r.frame : m.path, r });
+    if (!r.blocks.length) { toast(region ? 'В рамке не нашлось текста — обведите надпись чуть свободнее' : 'На кадре не нашлось текста', 'info', 3000); return; }
+    this.editor(c, { T, ts, src, frame: isV ? r.frame : m.path, r, region });
   },
 
   // 2) окно: кадр с найденными строками и поля для нового текста
   editor(c, ctx) {
     const { r } = ctx;
+    // обвели рамкой — найденное и есть нужное; весь кадр — отмечаете сами (щелчок по надписи на кадре)
+    const pre = !!ctx.region || r.blocks.length === 1;
     const fontLabel = (f) => f ? `${f.family}${f.bold ? ' Bold' : ''}${f.italic ? ' Italic' : ''}` : 'Шрифт по умолчанию';
     const body = h(`<div class="txe">
       <div class="txe-pic"><img alt=""><svg viewBox="0 0 ${r.w} ${r.h}" preserveAspectRatio="none"></svg></div>
       <div class="txe-list"></div>
-      <p class="muted small">Впишите новый текст — старый сотрётся, а новый встанет тем же шрифтом, цветом и размером.
+      <p class="muted small">${pre ? '' : 'Щёлкните по надписям, которые нужно заменить. '}Впишите новый текст — старый сотрётся, а новый встанет тем же шрифтом, цветом и размером.
         ${c.kind === 'video' ? 'На видео текст стирается на каждом кадре клипа, а новый едет за местом старого.' : ''} Потом его можно менять как обычный текст.</p>
     </div>`);
     $('img', body).src = fileUrl(ctx.frame);
@@ -107,7 +117,7 @@ const TextEdit = {
       svg.appendChild(poly);
       const opts = [b.font, ...b.alts.filter(a => !b.font || a.family !== b.font.family || a.bold !== b.font.bold || a.italic !== b.font.italic)].filter(Boolean);
       const row = h(`<div class="txe-row">
-        <label class="check"><input type="checkbox" checked><span></span></label>
+        <label class="check"><input type="checkbox" ${pre ? 'checked' : ''}><span></span></label>
         <b class="txe-n">${i + 1}</b>
         <input class="text-input txe-text" spellcheck="false">
         <select class="select txe-font">${opts.map((f, k) => `<option value="${k}">${esc(fontLabel(f))}</option>`).join('')}</select>
@@ -121,6 +131,7 @@ const TextEdit = {
       row.onmouseenter = () => poly.classList.add('hot');
       row.onmouseleave = () => poly.classList.remove('hot');
       list.appendChild(row);
+      sync();
       return { b, row, on, opts };
     });
     modal({ title: 'Заменить текст на кадре', body, width: 760, cls: 'txe-modal', buttons: [
@@ -133,7 +144,7 @@ const TextEdit = {
         this.apply(c, ctx, pick);
       } },
     ] });
-    setTimeout(() => { const t = $('.txe-text', rows[0].row); t.focus(); t.select(); }, 60);
+    if (pre) setTimeout(() => { const t = $('.txe-text', rows[0].row); t.focus(); t.select(); }, 60);
   },
 
   // 3) стереть старый текст и поставить новый

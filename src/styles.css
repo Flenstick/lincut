@@ -1295,3 +1295,5 @@ body.dragging .splitter-v:hover::after, body.dragging .splitter-h:hover::after {
 .txe-row .txe-font { height: 30px; }
 .txe-row .txe-color { width: 32px; height: 30px; padding: 0; border: none; background: none; cursor: pointer; }
 .txe-modal .modal-body > p { margin: 0; }
+
+.stage > .box-pick-whole { right: auto; left: 12px; }
