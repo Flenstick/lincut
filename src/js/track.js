@@ -80,7 +80,8 @@ const Track = {
       if (store.p !== proj) return;
       r.pts.forEach(p => { p[0] += src.off; });
       const id = uid();
-      proj.trk = (proj.trk || []).filter(x => !(c.follow && x.id === c.follow.trk));
+      // старые траектории не удаляем сразу — на них ссылаются шаги отмены (Ctrl+Z после повторного трекинга)
+      proj.trk = this.prune(proj.trk || []);
       proj.trk.push({ id, mediaId: m.id, fps: r.fps, engine: r.engine, pts: r.pts });
       c.follow = { mode, trk: id, target: V.id, smooth: c.follow ? c.follow.smooth : 35, size: c.follow ? c.follow.size : mode !== 'camera', zoom: c.follow ? c.follow.zoom : 1.5, ref: { T0, t0, tf } };
       this.apply(c);
@@ -107,10 +108,18 @@ const Track = {
     const tf = c.follow.ref.tf;
     c.keys = [];
     putTf(c, keyPick(tf));
-    store.p.trk = (store.p.trk || []).filter(x => x.id !== c.follow.trk);
     delete c.follow;
+    store.p.trk = this.prune(store.p.trk || []);
     store.commit('track-off');
     Player.requestRender();
+  },
+
+  // траектории, на которые не ссылается ни один клип, нужны только для отмены — храним последние 8
+  prune(list) {
+    const used = new Set();
+    for (const tr of store.p.tracks) for (const x of tr.clips) if (x.follow) used.add(x.follow.trk);
+    const spare = list.filter(x => !used.has(x.id)).slice(-8);
+    return list.filter(x => used.has(x.id) || spare.includes(x));
   },
 
   // траектория: пропуски (объект потерян) — по соседям, затем сглаживание по Гауссу

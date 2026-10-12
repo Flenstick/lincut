@@ -1275,3 +1275,7 @@ body.dragging .splitter-v:hover::after, body.dragging .splitter-h:hover::after {
 .sh-prow:hover { background: var(--panel-3); }
 .sh-prow input { accent-color: var(--accent); margin: 0; }
 .sh-pstate { min-height: 16px; }
+
+/* рамка трекинга: «Отмена» поверх превью */
+.stage > .box-pick-cancel { position: absolute; right: 12px; bottom: 12px; z-index: 5; width: auto; padding: 0 14px; height: 32px; background: rgba(0, 0, 0, .8); color: #fff; border-color: rgba(255, 255, 255, .25); }
+.stage > .box-pick-cancel:hover { background: rgba(40, 40, 40, .9); }

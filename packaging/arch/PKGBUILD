@@ -1,7 +1,7 @@
 # Maintainer: MrFlen <132173452+Flenstick@users.noreply.github.com>
 # LinCut для Arch Linux. Установка одной командой — см. README («Arch Linux»).
 pkgname=lincut
-pkgver=1.3.1
+pkgver=1.3.2
 pkgrel=1
 pkgdesc='Видеоредактор в стиле CapCut (Electron + FFmpeg)'
 arch=('any')

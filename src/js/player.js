@@ -269,17 +269,33 @@ const Player = {
       else if (c.kind === 'video') this.drawVideo(x, c, tt, W, H, k, an);
     };
     const hideM = matteSources();
+    // рамка трекинга: всё, что лежит над видео, рисуем отдельным слоем и делаем полупрозрачным — объект видно
+    const pickF = this.boxPick && store.find(this.boxPick.V.id), pickI = pickF ? tracks.indexOf(pickF.track) : -1;
+    let up = null;
+    if (pickI > 0) {
+      const L = this.pickLayer || (this.pickLayer = document.createElement('canvas'));
+      if (L.width !== this.canvas.width || L.height !== this.canvas.height) { L.width = this.canvas.width; L.height = this.canvas.height; }
+      up = L.getContext('2d');
+      up.setTransform(1, 0, 0, 1, 0, 0); up.globalAlpha = 1; up.filter = 'none';
+      up.clearRect(0, 0, L.width, L.height);
+      up.imageSmoothingQuality = 'high';
+    }
     for (let i = tracks.length - 1; i >= 0; i--) {
       const tr = tracks[i];
       if (tr.kind === 'audio' || tr.hidden) continue;
+      const cx = up && i < pickI ? up : ctx;
       for (const c of tr.clips) {
         if (t < c.start || t >= clipEnd(c) || c.disabled) continue;
         if (c.kind === 'effect') {
-          FXRun.apply(ctx, effectOps(c), t - c.start, clipDur(c), this.fxState[c.id] || (this.fxState[c.id] = {}));
+          if (cx === ctx) FXRun.apply(ctx, effectOps(c), t - c.start, clipDur(c), this.fxState[c.id] || (this.fxState[c.id] = {}));
           continue;
         }
         if (hideM.has(c.id)) continue;
-        drawClipLayer(ctx, c, tr, t, W, H, k, plain);
+        drawClipLayer(cx, c, tr, t, W, H, k, plain);
+      }
+      if (up && i === 0) {
+        ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = 'none'; ctx.globalAlpha = 0.22;
+        ctx.drawImage(this.pickLayer, 0, 0); ctx.restore();
       }
       // эффекты переходов применяются к главной дорожке
       if (tr.main) for (const j of junctionFx(tr)) if (t >= j.S && t < j.E) FXRun.apply(ctx, j.ops, t - j.S, j.E - j.S, this.fxState['j' + j.id] || (this.fxState['j' + j.id] = {}));
@@ -551,15 +567,20 @@ const Player = {
       }, 'crosshair');
     };
     const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); this.stopBoxPick(); } };
+    // кнопка «Отмена» прямо на превью (Esc и правая кнопка мыши тоже отменяют)
+    const cancel = h(`<button class="chip-btn box-pick-cancel">${icon('x')}Отмена</button>`);
+    cancel.addEventListener('mousedown', (e) => e.stopPropagation(), true);
+    cancel.onclick = (e) => { e.stopPropagation(); this.stopBoxPick(); };
+    stage.appendChild(cancel);
     stage.addEventListener('mousedown', down, true);
     document.addEventListener('keydown', key, true);
-    B.off = () => { stage.removeEventListener('mousedown', down, true); document.removeEventListener('keydown', key, true); this.ov.style.cursor = ''; };
+    B.off = () => { cancel.remove(); stage.removeEventListener('mousedown', down, true); document.removeEventListener('keydown', key, true); this.ov.style.cursor = ''; };
     this.ov.style.cursor = 'crosshair';
-    this.drawOverlay();
+    this.requestRender();
   },
   stopBoxPick() {
     if (!this.boxPick) return;
-    const B = this.boxPick; this.boxPick = null; B.off(); this.drawOverlay();
+    const B = this.boxPick; this.boxPick = null; B.off(); this.requestRender();
   },
   // прямоугольник в координатах проекта → рамка в долях кадра источника видео V [x, y, w, h]
   boxToSource(V, r) {
@@ -586,8 +607,10 @@ const Player = {
       o.clearRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
       o.strokeStyle = css('--accent'); o.lineWidth = 2 * dpr; o.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
     }
-    const txt = 'Обведите объект рамкой · Esc — отмена';
+    // подсказка: полная, а в маленьком превью — короткая
     o.font = `600 ${12 * dpr}px "Golos Text", "Adwaita Sans", sans-serif`;
+    const txt = ['Обведите объект рамкой · Esc или правая кнопка — отмена', 'Обведите объект рамкой · Esc — отмена', 'Обведите объект']
+      .find(x => o.measureText(x).width + 32 * dpr <= fw) || 'Обведите объект';
     const tw = o.measureText(txt).width + 20 * dpr;
     o.fillStyle = 'rgba(0,0,0,.8)'; roundRect(o, (fw - tw) / 2, 12 * dpr, tw, 26 * dpr, 6 * dpr); o.fill();
     o.fillStyle = '#fff'; o.textBaseline = 'middle'; o.textAlign = 'center'; o.fillText(txt, fw / 2, 25 * dpr); o.textAlign = 'left';
